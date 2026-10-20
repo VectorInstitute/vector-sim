@@ -9,8 +9,8 @@ from vector_sim.config.models import JobRecord
 from vector_sim.config.store import ConfigStore
 from vector_sim.errors import ConfigError, VectorSimError
 from vector_sim.exec import CommandRunner
-from vector_sim.images.build import require_cluster_profile, resolve_isaaclab
-from vector_sim.images.naming import remote_tar_name
+from vector_sim.commands.common import require_cluster_profile, resolve_isaaclab
+from vector_sim.images.naming import remote_sif_name
 from vector_sim.jobs.args import JobSpec, expand_train_args, resolve_job_spec
 from vector_sim.jobs.generate import (
     ENV_NAME,
@@ -90,7 +90,7 @@ class RunCommand:
             remote_run_dir=remote_dir,
             slurm_log=slurm_log,
             task=spec.task,
-            image_profile=spec.image_profile,
+            image_profile=spec.image_version,
             partition=spec.partition,
             gres=spec.resolved_gres,
             cpus=spec.cpus,
@@ -114,9 +114,9 @@ class RunCommand:
         if not self.store.generated_dir.is_dir() and not self.runner.dry_run:
             self.runner.emit("[run] WARNING: .vector-sim/generated missing; regenerating for this job")
 
-        remote_tar = f"{profile.paths.containers.rstrip('/')}/{remote_tar_name(spec.image_profile)}"
+        remote_sif = f"{profile.paths.containers.rstrip('/')}/{remote_sif_name(spec.image_version)}"
         probe = session.exec(
-            f"test -f {shlex.quote(remote_tar)} && echo CONTAINER_OK",
+            f"test -s {shlex.quote(remote_sif)} && echo CONTAINER_OK",
             category="ssh-preflight",
             check=False,
         )
@@ -130,9 +130,9 @@ class RunCommand:
                     suggestion=f"The login session expired. Run: vector-sim auth {profile.ssh_alias}",
                 )
             raise VectorSimError(
-                f"container not deployed at {remote_tar}",
+                f"container not deployed at {remote_sif}",
                 category="preflight",
-                suggestion="Container is not on the cluster yet. Run: vector-sim deploy",
+                suggestion=f"Container is not on the cluster yet. Run: vector-sim deploy --cluster {profile.name}",
             )
         if not probe.skipped:
             slurm = session.exec("command -v sbatch", category="slurm", check=False)
@@ -156,7 +156,7 @@ class RunCommand:
     ) -> None:
         self.runner.emit("[dry-run] would sync / submit (no remote mutations)")
         self.runner.emit(f"Task:              {spec.task}")
-        self.runner.emit(f"Image profile:     {spec.image_profile}")
+        self.runner.emit(f"Isaac Lab image:   {spec.image_version}")
         self.runner.emit(f"Partition:         {spec.partition}")
         self.runner.emit(f"GRES:              {spec.resolved_gres}")
         self.runner.emit(f"CPUs:             {spec.cpus}")

@@ -130,3 +130,16 @@ def test_generic_slurm_does_not_inherit_bonecho_hacks() -> None:
     assert "--writable-tmpfs" not in generated.run_singularity
     assert "--containall" not in generated.run_singularity
     assert "$CLUSTER_ISAACLAB_DIR/logs:/workspace/isaaclab/logs:rw" in generated.run_singularity
+
+
+def test_runner_uses_pulled_sif_in_place_without_extraction() -> None:
+    profile = bonecho_defaults()
+    profile.remote_user = "alice"
+    profile.scratch_dir = "/scratch/alice"
+    VectorSlurmAdapter().derive_scratch_paths(profile)
+    for gui in (False, True):
+        runner = generate_runtime(profile, gui=gui).run_singularity
+        assert 'SIF="$CLUSTER_SIF_PATH/$' in runner
+        assert "tar -xf" not in runner
+        assert ".tar" not in runner
+        assert "$SIF" in runner

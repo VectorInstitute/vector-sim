@@ -1,18 +1,76 @@
 # vector-sim
 
-Vector Sim builds and deploys reproducible Isaac Lab workloads to SLURM
-clusters over SSH and Apptainer. It supports both **Bonecho** and
-**Killarney**. Cluster behavior and paths are discovered during onboarding.
+Vector Sim deploys reproducible Isaac Lab workloads to SLURM clusters over SSH
+and Apptainer. It supports both **Bonecho** and **Killarney**. Cluster behavior
+and paths are discovered during onboarding.
+
+The tool uses NVIDIA's **official Isaac Lab container** from NGC. There is
+nothing to build locally and no Docker is needed anywhere: the image is pulled
+directly on the cluster with Apptainer.
 
 The tool generates its own runtime wrappers; do **not** edit Isaac Lab's
 `docker/cluster/` scripts. Ordinary changes under Isaac Lab's `source/` or
-`scripts/` directories are synchronized per job and do not rebuild the image.
+`scripts/` directories are synchronized per job and never touch the image.
+Keep your Isaac Lab checkout close to the image version you pull (for example
+the `v2.3.2` tag for `--image-version 2.3.2`), since the checkout's source is
+mounted over the image's copy at run time.
+
+## Quick start: use NVIDIA's Isaac Lab image on the cluster
+
+Docker does not work on the clusters, so the official image is pulled with
+**Apptainer** instead. Vector Sim automates this end to end.
+
+1. **Create an NVIDIA NGC account** (free) at <https://ngc.nvidia.com> and
+   generate an API key at <https://org.ngc.nvidia.com/setup/api-keys>.
+
+2. **Pick the Isaac Lab version** you want from the
+   [Isaac Lab catalog page](https://catalog.ngc.nvidia.com/orgs/nvidia/containers/isaac-lab/tags).
+   Each tag is a release, for example
+   `nvcr.io/nvidia/isaac-lab:2.3.2` (the default).
+
+3. **Export your NGC credentials** on the machine where you run `vector-sim`.
+   For NGC the username is the literal string `$oauthtoken` (keep the single
+   quotes) and the password is your API key:
+
+   ```bash
+   export APPTAINER_DOCKER_USERNAME='$oauthtoken'
+   export APPTAINER_DOCKER_PASSWORD='<your NGC API key>'
+   ```
+
+   If you only set `APPTAINER_DOCKER_PASSWORD`, the username defaults to
+   `$oauthtoken`. The key is sent to the cluster over SSH stdin for the pull;
+   it is never put on a command line, in a file, or in the profile.
+
+4. **Pull the image and run Isaac Lab:**
+
+   ```bash
+   source ./activate.sh
+   vector-sim onboard bonecho          # once per cluster (see section 3)
+   vector-sim deploy --cluster bonecho                          # pulls Isaac Lab 2.3.2
+   vector-sim deploy --cluster bonecho --image-version 2.3.1    # or another release
+   vector-sim run --cluster bonecho --task Isaac-Cartpole-v0 --headless
+   ```
+
+   `deploy` runs `apptainer pull docker://nvcr.io/nvidia/isaac-lab:<version>` on
+   the cluster and stores `isaac-lab-<version>.sif` under the profile's
+   containers directory (about 20 GiB; plan for ~40 GiB free while it
+   converts). It is skipped when the SIF is already there; `--force` re-pulls.
+   `deploy --plan` shows what would happen without pulling.
+
+To do the same pull by hand on a cluster login node:
+
+```bash
+module load apptainer
+export APPTAINER_DOCKER_USERNAME='$oauthtoken'
+export APPTAINER_DOCKER_PASSWORD='<your NGC API key>'
+apptainer pull isaac-lab-2.3.2.sif docker://nvcr.io/nvidia/isaac-lab:2.3.2
+```
 
 This guide uses `<cluster>` where the value is either `bonecho` or
 `killarney`. Operational examples always pass `--cluster` so it is clear where
 the command runs.
 
-## 1. Build the package
+## 1. Install the package
 
 Clone the repository:
 
@@ -49,9 +107,10 @@ sudo apt install python3-yaml
 The laptop needs:
 
 - Python 3.10+, PyYAML, `git`, `ssh`, and `rsync`
-- Docker (`/snap/bin/docker` is supported)
-- Apptainer for local image conversion
-- Approximately 40 GiB of free disk for the first conversion
+- An NVIDIA NGC API key exported as `APPTAINER_DOCKER_PASSWORD` (see the quick start)
+
+Docker and a local Apptainer are **not** required; the image is pulled on the
+cluster.
 
 Inspect local prerequisites. This command reports required actions but never
 runs `sudo`:
@@ -59,16 +118,6 @@ runs `sudo`:
 ```bash
 vector-sim bootstrap
 ```
-
-If Docker is installed but access is denied:
-
-```bash
-sudo usermod -aG docker "$USER"
-# Log out and back in.
-```
-
-Keep `docker` as a supplementary group. Do not use `newgrp docker`, run the
-whole workflow with `sudo`, or change the Docker socket to mode `666`.
 
 ### Configure SSH aliases
 
@@ -131,8 +180,8 @@ vector-sim doctor --cluster killarney
 
 The expected result is `Overall: READY`.
 
-Deploy the container separately to every cluster you will use. `--plan` does
-not build, convert, or upload anything:
+Pull the official NGC container onto every cluster you will use. `--plan`
+only checks the cluster and prints what would happen:
 
 ```bash
 # Bonecho
@@ -144,18 +193,16 @@ vector-sim deploy --cluster killarney --plan
 vector-sim deploy --cluster killarney
 ```
 
-The first deployment builds the Docker image, converts it to an Apptainer
-artifact, and uploads approximately 20 GiB to the selected cluster. The local
-build and conversion are reusable, but the remote artifact must exist on each
-cluster. Interrupted uploads can be resumed by rerunning the same deploy
-command.
+The first deployment downloads `nvcr.io/nvidia/isaac-lab:<version>` (about
+20 GiB) straight to the selected cluster using the `APPTAINER_DOCKER_USERNAME`
+and `APPTAINER_DOCKER_PASSWORD` environment variables. Nothing is built or
+uploaded from your machine. The pull goes to a `.partial` file and is renamed
+only when complete, so an interrupted pull is simply rerun.
 
-Later deployments should normally report:
+A later deployment of the same version reports:
 
 ```text
-Docker build        SKIPPED
-Conversion          cached
-Upload              SKIPPED
+Pull                SKIPPED
 ```
 
 Optionally run the acceptance workload on each cluster:
@@ -253,13 +300,12 @@ vector-sim videos --cluster <cluster>
 vector-sim pull-video --cluster <cluster> --latest
 ```
 
-## Caching behavior
+## What is cached
 
-| Layer | Cached when | Rebuilds or transfers when |
+| Item | Reused when | Changes when |
 | --- | --- | --- |
-| Docker image | Docker inputs are unchanged | Dockerfile, compose, environment, or dependency inputs change |
-| Apptainer artifact | Image digest and converter are unchanged | Docker image changes |
-| Remote upload | Selected cluster's checksum matches | Artifact differs or is missing on that cluster |
+| Cluster SIF (`isaac-lab-<version>.sif`) | The file already exists for that version | You run `deploy --force`, or pick another `--image-version` |
+| Apptainer layer cache | Under `<containers>/.apptainer/` on the cluster | Pulling a new version |
 | Runtime source | Never treated as image input | Synchronized for every job |
 
 ## Troubleshooting
@@ -268,14 +314,16 @@ vector-sim pull-video --cluster <cluster> --latest
 | --- | --- |
 | `vector-sim` not found | `source /absolute/path/to/vector-sim/activate.sh` |
 | PyYAML missing | `sudo apt install python3-yaml` |
-| Docker missing | Install Docker Engine; `/snap/bin/docker` is supported |
-| Docker permission denied | Add `$USER` to the `docker` group, then log out and back in |
+| `APPTAINER_DOCKER_PASSWORD is not set` | Export your NGC API key; see the quick start |
+| NGC rejected the credentials (401) | Username must be the literal `$oauthtoken` (single-quoted); regenerate the API key if needed |
+| Tag not found | Pick a tag from the [NGC tags page](https://catalog.ngc.nvidia.com/orgs/nvidia/containers/isaac-lab/tags) |
+| Pull ran out of disk | Free ~40 GiB under the containers directory on the cluster, then rerun `deploy` |
 | SSH alias missing | Add `Host bonecho` or `Host killarney` to `~/.ssh/config` |
 | MFA session expired | `vector-sim auth <cluster>` |
 | Isaac Lab missing | `vector-sim onboard <cluster> --isaaclab /path/to/IsaacLab` |
-| Container missing remotely | `vector-sim deploy --cluster <cluster>` |
+| Container missing on the cluster | `vector-sim deploy --cluster <cluster>` |
 | SLURM, scratch, or Apptainer issue | `vector-sim doctor --cluster <cluster>` |
-| Upload interrupted | Rerun `vector-sim deploy --cluster <cluster>` |
+| Pull interrupted | Rerun `vector-sim deploy --cluster <cluster>` |
 | GUI startup failed | The error names the component and its log under the run's `logs/gui/` |
 | `Xvfb` or `websockify` missing | Those tools must already be on the compute node; GUI mode does not install them with apt |
 
@@ -288,7 +336,8 @@ either cluster's settings as universal defaults.
 
 Most users need only `bootstrap`, `auth`, `onboard`, `doctor`, `deploy`, `run`,
 `gui`, and the monitoring commands. Lower-level commands such as `init`,
-`setup`, `build`, `push`, and `shell` remain available.
+`setup`, and `shell` remain available. The former local `build` and `push`
+commands were removed in favor of `deploy`.
 
 Historical acceptance evidence is in
 [docs/KNOWN_GOOD.md](docs/KNOWN_GOOD.md). The clean-machine checklist is in

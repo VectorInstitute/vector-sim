@@ -6,13 +6,13 @@ from dataclasses import dataclass, field
 
 from vector_sim.cluster.slurm import gres_request, slurm_time
 from vector_sim.config.models import ClusterProfile, DefaultJob
-from vector_sim.images.naming import image_stem
+from vector_sim.images.naming import DEFAULT_ISAACLAB_VERSION, image_stem, validate_version
 
 
 @dataclass
 class JobSpec:
     task: str
-    image_profile: str = "base"
+    image_version: str = DEFAULT_ISAACLAB_VERSION
     partition: str | None = None
     gpu_type: str | None = None
     gpu_count: int = 1
@@ -29,7 +29,7 @@ class JobSpec:
 
     @property
     def container_name(self) -> str:
-        return image_stem(self.image_profile)
+        return image_stem(self.image_version)
 
     @property
     def resolved_gres(self) -> str | None:
@@ -50,12 +50,14 @@ def resolve_job_spec(profile: ClusterProfile, **overrides) -> JobSpec:
     task = overrides.get("task")
     if not task:
         raise ValueError("--task is required")
-    image_profile = overrides.get("image_profile") or profile.image.name or "base"
+    image_version = validate_version(
+        overrides.get("image_version") or profile.image.version or DEFAULT_ISAACLAB_VERSION
+    )
     video = bool(overrides.get("video", False))
     headless = bool(overrides.get("headless")) or video
     return JobSpec(
         task=str(task),
-        image_profile=str(image_profile),
+        image_version=image_version,
         partition=overrides.get("partition") or defaults.partition,
         gpu_type=overrides.get("gpu") or overrides.get("gpu_type") or defaults.gpu_type,
         gpu_count=int(overrides.get("gpus") or overrides.get("gpu_count") or defaults.gpu_count or 1),

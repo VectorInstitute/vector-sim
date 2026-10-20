@@ -12,9 +12,6 @@ from vector_sim.compat import ISAACLAB_COMMIT, classify_isaaclab_commit, classif
 from vector_sim.config.models import bonecho_defaults
 from vector_sim.config.store import ConfigStore
 from vector_sim.exec import CommandRunner
-from vector_sim.images.fingerprint import conversion_fingerprint, fingerprint_repo_build_inputs
-from vector_sim.images.naming import artifact_filename
-from vector_sim.images.state import ImageArtifactState, ImageStateStore
 from vector_sim.jobs.status import JobStatus
 from vector_sim.onboard.isaaclab import find_or_clone, resolve_existing
 from vector_sim.onboard.prereqs import STATUS_INSTALLED, inspect_platform, inspect_prereqs
@@ -60,7 +57,6 @@ def _ssh_fake() -> FakeExecute:
     fake.add("mkdir -p", stdout="")
     fake.add("rev-parse", stdout=ISAACLAB_COMMIT + "\n")
     fake.add("--version", stdout="apptainer version 1.3.4\n")
-    fake.add("image inspect", stdout="sha256:abc\n")
     return fake
 
 
@@ -97,7 +93,8 @@ def test_platform_ubuntu_and_other() -> None:
 def test_prereq_detection_has_required_tools() -> None:
     report = inspect_prereqs()
     names = {i.name for i in report.items}
-    assert {"git", "ssh", "rsync", "docker", "apptainer", "Python"} <= names
+    assert {"git", "ssh", "rsync", "Python", "NGC credentials"} <= names
+    assert "docker" not in names
     installed = [i for i in report.items if i.name in {"git", "ssh", "rsync"}]
     assert all(i.status == STATUS_INSTALLED for i in installed)
 
@@ -178,63 +175,6 @@ def test_onboard_reuses_setup_and_is_idempotent(tmp_path: Path) -> None:
     assert store.load_profile("bonecho").isaaclab_path == str(repo.resolve())
 
 
-def test_deploy_cache_hit_and_first_run(tmp_path: Path, capsys) -> None:
-    repo = _isaaclab(tmp_path)
-    store = ConfigStore(tmp_path / "cfg")
-    store.ensure_local()
-    profile = _profile(repo)
-    store.save_profile(profile)
-    store.set_active("bonecho")
-
-    fake = FakeExecute()
-    fake.add("--version", stdout="apptainer version 1.3.4\n")
-    fake.add("image inspect", stdout="sha256:abc123\n")
-    runner = CommandRunner(execute=fake)
-    first = DeployCommand(runner, store, start_dir=repo).run(cluster="bonecho", image_profile="base", plan=True)
-    assert first == 0
-    out1 = capsys.readouterr().out
-    assert "Docker build        REQUIRED" in out1
-    assert "Conversion          REQUIRED" in out1
-    assert "Upload              REQUIRED" in out1
-    # No conversion/upload on --plan
-    assert not any(c.args and c.args[0] == "rsync" for c in runner.calls)
-
-    digest = "sha256:abc123def4567890"
-    blob = b"tar"
-    artifact = store.artifacts_dir / artifact_filename("base", digest)
-    artifact.write_bytes(blob)
-    version = "apptainer version 1.3.4"
-    conv = conversion_fingerprint(
-        built_image_digest=digest,
-        backend="local-apptainer",
-        version=version,
-        options="--sandbox --fakeroot tar",
-    )
-    ImageStateStore(store).upsert(
-        ImageArtifactState(
-            image_profile="base",
-            docker_image="isaac-lab-base:latest",
-            build_input_fingerprint=fingerprint_repo_build_inputs(repo, "base"),
-            built_image_digest=digest,
-            conversion_fingerprint=conv,
-            local_artifact=str(artifact),
-            local_artifact_sha256="abc",
-            remote_sha256="abc",
-            remote_path="/scratch/alice/isaaclab-containers/isaac-lab-base.tar",
-        )
-    )
-    fake2 = FakeExecute()
-    fake2.add("--version", stdout=version + "\n")
-    fake2.add("image inspect", stdout=digest + "\n")
-    runner2 = CommandRunner(execute=fake2)
-    code = DeployCommand(runner2, store, start_dir=repo).run(cluster="bonecho", plan=True)
-    assert code == 0
-    out2 = capsys.readouterr().out
-    assert "Docker build        SKIPPED" in out2
-    assert "Conversion          cached" in out2
-    assert "LIKELY SKIPPED" in out2
-
-
 def test_smoke_state_machine() -> None:
     ok = evaluate_job(JobStatus(job_id="1", state="COMPLETED", exit_code="0:0"))
     assert ok.passed and ok.phase == "COMPLETED"
@@ -279,28 +219,15 @@ def test_doctor_ready_summary(tmp_path: Path) -> None:
     profile = _profile(repo)
     store.save_profile(profile)
     store.set_active("bonecho")
-    ImageStateStore(store).upsert(
-        ImageArtifactState(
-            image_profile="base",
-            docker_image="isaac-lab-base:latest",
-            built_image_digest="sha256:abc",
-            conversion_fingerprint="conv",
-            local_artifact=str(tmp_path / "a.tar"),
-            remote_sha256="dead",
-            remote_path="/scratch/alice/isaaclab-containers/isaac-lab-base.tar",
-        )
-    )
-    (tmp_path / "a.tar").write_bytes(b"x")
     fake = _ssh_fake()
     runner = CommandRunner(execute=fake)
     results = Doctor(runner, store, cluster="bonecho", start_dir=repo).run()
     report = format_doctor_report(results)
     assert "Overall:" in report
     assert "READY" in report
-    assert "Deployment:" in report
-    assert "Docker image" in report
-    assert "Converted artifact" in report
-    assert "Remote artifact" in report
+    assert "Container:" in report
+    assert "NGC image" in report
+    assert "remote SIF" in report
 
 
 def test_version_classify() -> None:

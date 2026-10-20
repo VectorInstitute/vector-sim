@@ -11,7 +11,7 @@ from vector_sim.commands.run import RunCommand
 from vector_sim.config.store import ConfigStore
 from vector_sim.config.store import ConfigStore
 from vector_sim.exec import CommandRunner
-from vector_sim.images.build import require_cluster_profile
+from vector_sim.commands.common import require_cluster_profile
 from vector_sim.jobs.status import TERMINAL_STATES, JobStatus, normalize_state, probe_job
 from vector_sim.jobs.videos import find_videos_command, parse_find_videos
 from vector_sim.ssh.session import SshSession
@@ -75,7 +75,7 @@ class SmokeTestCommand:
         code = RunCommand(self.runner, self.store, start_dir=self.start_dir).run(
             cluster=cluster,
             task=SMOKE_TASK,
-            image_profile=None,
+            image_version=None,
             video=video,
             video_length=200,
             video_interval=1000,

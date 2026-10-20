@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import os
+import shlex
 import shutil
 from dataclasses import dataclass
 from enum import Enum
@@ -14,7 +14,8 @@ from vector_sim.config.store import ConfigStore
 from vector_sim.errors import ConfigError, DiscoveryError
 from vector_sim.exec import CommandRunner
 from vector_sim.compat import WRAPPER_SCHEMA_VERSION, classify_isaaclab_commit
-from vector_sim.images.state import ImageStateStore
+from vector_sim.images.naming import remote_sif_name
+from vector_sim.images.ngc import ENV_PASSWORD, ENV_USERNAME, NGC_KEY_HELP, credentials_from_env
 from vector_sim.local.repo import discover_isaac_lab
 from vector_sim.ssh.multiplex import RECOMMENDED_SSH_SNIPPET
 from vector_sim.ssh.session import SshSession, resolved_ssh_from_g
@@ -50,20 +51,6 @@ class CheckResult:
 
 def tool_on_path(name: str) -> str | None:
     return shutil.which(name)
-
-
-def docker_socket_accessible(sock: Path | None = None) -> bool:
-    path = sock or Path("/var/run/docker.sock")
-    return path.exists() and os.access(path, os.R_OK | os.W_OK)
-
-
-def docker_access_hint() -> str:
-    return (
-        "Docker is on PATH but this user cannot access the daemon. "
-        "Recommended: sudo usermod -aG docker $USER  then log out and back in. "
-        "Keep docker as a supplementary group; do not use newgrp docker, chmod 666 on "
-        "docker.sock, or sudo for the whole workflow."
-    )
 
 
 class Doctor:
@@ -107,13 +94,12 @@ class Doctor:
 
         results.extend(self._ssh_checks(profile))
         results.extend(self._cluster_checks(profile))
-        results.extend(self._container_checks(profile))
         results.extend(self._deployment_checks(profile))
         return results
 
     def _local_checks(self) -> list[CheckResult]:
         results: list[CheckResult] = []
-        for tool, required in (("git", True), ("ssh", True), ("rsync", True), ("docker", True)):
+        for tool, required in (("git", True), ("ssh", True), ("rsync", True)):
             path = tool_on_path(tool)
             passed = path is not None
             results.append(
@@ -126,27 +112,14 @@ class Doctor:
                 )
             )
 
-        docker_path = tool_on_path("docker")
-        if docker_path:
-            accessible = docker_socket_accessible()
-            results.append(
-                CheckResult(
-                    "Local",
-                    "Docker access",
-                    classify_result(passed=accessible, required=True),
-                    "OK" if accessible else "denied",
-                    docker_path if accessible else docker_access_hint(),
-                )
-            )
-
-        apptainer = tool_on_path("apptainer") or tool_on_path("singularity")
+        creds = credentials_from_env()
         results.append(
             CheckResult(
                 "Local",
-                "Apptainer",
-                classify_result(passed=apptainer is not None, required=False),
-                "OK" if apptainer else "missing",
-                apptainer or "needed later for local image conversion",
+                "NGC credentials",
+                classify_result(passed=creds is not None, required=False),
+                "OK" if creds else "not set",
+                f"{ENV_USERNAME}={creds.username}, {ENV_PASSWORD}=<hidden>" if creds else f"needed for deploy. {NGC_KEY_HELP}",
             )
         )
 
@@ -345,50 +318,40 @@ class Doctor:
     def _deployment_checks(self, profile: ClusterProfile | None) -> list[CheckResult]:
         if profile is None:
             return []
-        state = ImageStateStore(self.store).get(profile.image.name or "base")
-        docker_ready = bool(state and state.built_image_digest)
-        conv_ready = bool(state and state.conversion_fingerprint and state.local_artifact)
-        remote_ready = bool(state and state.remote_sha256)
-        return [
-            CheckResult(
-                "Deployment",
-                "Docker image",
-                Severity.INFO,
-                "READY" if docker_ready else "NEEDS BUILD",
-                (state.built_image_digest if state else "") or profile.image.docker_image,
-            ),
-            CheckResult(
-                "Deployment",
-                "Converted artifact",
-                Severity.INFO,
-                "READY" if conv_ready else "NEEDS CONVERSION",
-                (state.local_artifact if state else "") or "",
-            ),
-            CheckResult(
-                "Deployment",
-                "Remote artifact",
-                Severity.INFO,
-                "READY" if remote_ready else "NEEDS PUSH",
-                (state.remote_path if state else "") or "",
-            ),
-        ]
-
-    def _container_checks(self, profile: ClusterProfile | None) -> list[CheckResult]:
-        if profile is None:
-            return []
-        fp = profile.fingerprints
-        local = "present" if fp.built_image_digest else "unknown"
-        conv = "present" if fp.conversion_fingerprint else "unknown"
-        match = (
-            "matching"
-            if fp.built_image_digest and fp.conversion_fingerprint
-            else "not checked"
+        version = profile.image.version
+        image = f"nvcr.io/nvidia/isaac-lab:{version}"
+        results = [CheckResult("Container", "NGC image", Severity.INFO, "OK", image)]
+        if not profile.paths.containers:
+            results.append(
+                CheckResult("Container", "remote SIF", Severity.WARNING, "unknown", "profile has no containers path")
+            )
+            return results
+        sif = f"{profile.paths.containers.rstrip('/')}/{remote_sif_name(version)}"
+        session = SshSession(
+            profile.ssh_alias,
+            self.runner,
+            login_shell=profile.scheduler.remote_shell == "login",
         )
-        return [
-            CheckResult("Container", "local image", Severity.INFO, local, profile.image.docker_image),
-            CheckResult("Container", "conversion", Severity.INFO, conv, fp.conversion_fingerprint or "no fingerprint"),
-            CheckResult("Container", "checksum", Severity.INFO, match, fp.build_input_fingerprint or "no build input fingerprint"),
-        ]
+        probe = session.exec(
+            f"test -s {shlex.quote(sif)} && echo SIF_PRESENT",
+            category="ssh-preflight",
+            check=False,
+        )
+        if probe.skipped:
+            results.append(CheckResult("Container", "remote SIF", Severity.INFO, "skipped", "dry-run"))
+        elif "SIF_PRESENT" in probe.stdout:
+            results.append(CheckResult("Container", "remote SIF", Severity.INFO, "READY", sif))
+        else:
+            results.append(
+                CheckResult(
+                    "Container",
+                    "remote SIF",
+                    Severity.INFO,
+                    "NEEDS DEPLOY",
+                    f"{sif}  next: vector-sim deploy --cluster {profile.name}",
+                )
+            )
+        return results
 
 
 def format_doctor_report(results: list[CheckResult]) -> str:

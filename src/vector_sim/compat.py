@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 # Generated wrapper contract. Increment when wrapper semantics change.
-WRAPPER_SCHEMA_VERSION = "1"
+WRAPPER_SCHEMA_VERSION = "2"
 
 # Pinned Isaac Lab checkout that passed Docker + Cartpole acceptance.
 ISAACLAB_REMOTE = "https://github.com/isaac-sim/IsaacLab.git"
@@ -16,8 +16,6 @@ ISAACLAB_COMMIT = "b0542fe2d45bf91c4e1d9ef6952b9c709c80b4e8"
 ISAACLAB_REF_NAME = "tested Bonecho acceptance commit"
 
 # Local tools observed on the machine that produced the accepted deployment.
-TESTED_DOCKER_VERSION = "29.6.1"
-TESTED_LOCAL_APPTAINER = "1.5.3"
 TESTED_PYTHON = "3.12"
 
 # Cluster-side: exact remote Apptainer/SLURM strings were not pinned as
