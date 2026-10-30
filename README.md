@@ -11,9 +11,7 @@ directly on the cluster with Apptainer.
 The tool generates its own runtime wrappers; do **not** edit Isaac Lab's
 `docker/cluster/` scripts. Ordinary changes under Isaac Lab's `source/` or
 `scripts/` directories are synchronized per job and never touch the image.
-Keep your Isaac Lab checkout close to the image version you pull (for example
-the `v2.3.2` tag for `--image-version 2.3.2`), since the checkout's source is
-mounted over the image's copy at run time.
+Make sure rhe Isaac Lab version that you clone matches the Docker Image that you pull with `deploy`.
 
 ## Quick start: use NVIDIA's Isaac Lab image on the cluster
 
@@ -39,16 +37,39 @@ Docker does not work on the clusters, so the official image is pulled with
 
    If you only set `APPTAINER_DOCKER_PASSWORD`, the username defaults to
    `$oauthtoken`. The key is sent to the cluster over SSH stdin for the pull;
-   it is never put on a command line, in a file, or in the profile.
+   it is never put on a command line, in a file, or in the profile. You can also save your credentials in `~/.bashrc`.
 
-4. **Pull the image and run Isaac Lab:**
+4. **Choose your Isaac Lab Version to Match the Docker Image**
+   Before everything, decide what version you want to install and work with. Clone the correct version manually at a selected path. We suggest that you clone it in the same parent directory as `vector-sim`.
+   The lates version as of October 2026 is v3.0.0.
+   ```bash
+   cd ..
+   git clone --branch v3.0.0 https://github.com/isaac-sim/IsaacLab.git IsaacLab
+   ```
+   Then pass that path to onboard.
+
+5. **Pull the image and run Isaac Lab:**
+   Before pulling the image, make sure to configure your SSH by modifying `~/.ssh/config` according to the guide.
+   Then run :
 
    ```bash
    source ./activate.sh
-   vector-sim onboard bonecho          # once per cluster (see section 3)
-   vector-sim deploy --cluster bonecho                          # pulls Isaac Lab 2.3.2
-   vector-sim deploy --cluster bonecho --image-version 2.3.1    # or another release
-   vector-sim run --cluster bonecho --task Isaac-Cartpole-v0 --headless
+   vector-sim --version
+   vector-sim auth bonecho
+   # OR
+   vector-sim auth killarney
+   ```
+   After authentication is complete, run:
+   
+   ```bash
+   vector-sim onboard bonecho --isaaclab /absolute/path/to/IsaacLab  # once per cluster (see section 3)
+   ```
+
+   ```bash
+
+   # type exit in terminal to get back to the workflow
+   vector-sim deploy --cluster bonecho --image-version 3.0.0    # or another release
+   vector-sim run --cluster bonecho --task Isaac-Cartpole
    ```
 
    `deploy` runs `apptainer pull docker://nvcr.io/nvidia/isaac-lab:<version>` on
@@ -57,14 +78,25 @@ Docker does not work on the clusters, so the official image is pulled with
    converts). It is skipped when the SIF is already there; `--force` re-pulls.
    `deploy --plan` shows what would happen without pulling.
 
+   The image will be automatically pulled and saved at your `/scratch/$USER_ID$`. Before running `deploy`, you can change the default destination of the image to a directory with more available space if you want. In order to do that, change `paths.containers` in `vector-sim/.vector-sim/bonecho.yaml` and add `- paths.containers` under `user_set`.
+
 To do the same pull by hand on a cluster login node:
 
 ```bash
 module load apptainer
 export APPTAINER_DOCKER_USERNAME='$oauthtoken'
 export APPTAINER_DOCKER_PASSWORD='<your NGC API key>'
-apptainer pull isaac-lab-2.3.2.sif docker://nvcr.io/nvidia/isaac-lab:2.3.2
+apptainer pull isaac-lab-2.3.2.sif docker://nvcr.io/nvidia/isaac-lab:3.0.0 
 ```
+
+5. **If you have already deployed vector-sim:**
+Repeat the authentication step:
+
+
+Then run doctor to make sure Image also is pulled. You should see 
+
+Overall:
+  READY
 
 This guide uses `<cluster>` where the value is either `bonecho` or
 `killarney`. Operational examples always pass `--cluster` so it is clear where
@@ -221,11 +253,11 @@ Always pass `--cluster` to avoid submitting to the wrong active profile.
 ```bash
 # Bonecho
 vector-sim run --cluster bonecho \
-  --task Isaac-Cartpole-v0 --video --headless
+  --task Isaac-Cartpole
 
 # Killarney
 vector-sim run --cluster killarney \
-  --task Isaac-Cartpole-v0 --video --headless
+  --task Isaac-Cartpole
 ```
 
 Source is synchronized into a new scratch run directory on the selected
