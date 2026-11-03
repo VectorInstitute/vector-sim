@@ -72,7 +72,9 @@ class CommandRunner:
         dry_run_skip: bool = True,
         suggestion: str | None = None,
         timeout: float | None = None,
+        input_text: str | None = None,
     ) -> CommandResult:
+        """Run a command. ``input_text`` is sent on stdin so secrets never reach argv or logs."""
         argv = [str(a) for a in args]
         self.calls.append(RecordedCall(args=argv, category=category, cwd=cwd))
         if self.verbose:
@@ -83,15 +85,19 @@ class CommandRunner:
             return CommandResult(args=argv, returncode=0, category=category, skipped=True)
 
         if self._execute is not None:
+            extra = {"input_text": input_text} if input_text is not None else {}
             result = self._execute(
                 argv,
                 category=category,
                 cwd=cwd,
                 env=env,
                 timeout=timeout,
+                **extra,
             )
         else:
-            result = self._run_subprocess(argv, category=category, cwd=cwd, env=env, timeout=timeout)
+            result = self._run_subprocess(
+                argv, category=category, cwd=cwd, env=env, timeout=timeout, input_text=input_text
+            )
 
         if self.verbose and result.stdout:
             self.emit(result.stdout.rstrip())
@@ -120,9 +126,11 @@ class CommandRunner:
         cwd: str | None,
         env: Mapping[str, str] | None,
         timeout: float | None,
+        input_text: str | None = None,
     ) -> CommandResult:
         completed = subprocess.run(
             argv,
+            input=input_text,
             cwd=cwd,
             env={**os.environ, **dict(env)} if env is not None else None,
             capture_output=True,

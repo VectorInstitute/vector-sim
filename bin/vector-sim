@@ -2,7 +2,13 @@
 set -e
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
-PYTHON="${VECTOR_SIM_PYTHON:-python3}"
+# Prefer the project's uv environment (created by `uv sync`) over system python.
+if [ -x "${ROOT}/.venv/bin/python" ]; then
+    DEFAULT_PYTHON="${ROOT}/.venv/bin/python"
+else
+    DEFAULT_PYTHON=python3
+fi
+PYTHON="${VECTOR_SIM_PYTHON:-$DEFAULT_PYTHON}"
 
 if ! command -v "$PYTHON" >/dev/null 2>&1; then
     echo "error: $PYTHON is not installed or not on PATH" >&2
@@ -11,7 +17,7 @@ fi
 
 if ! "$PYTHON" -c "import yaml" >/dev/null 2>&1; then
     echo "error: PyYAML is required by vector-sim" >&2
-    echo "next: install the Ubuntu package: sudo apt install python3-yaml" >&2
+    echo "next: run 'uv sync' in ${ROOT} (installs into ${ROOT}/.venv, nothing global)" >&2
     exit 1
 fi
 

@@ -6,6 +6,8 @@ from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timezone
 from typing import Any, Callable, Iterable, Mapping
 
+from vector_sim.images.naming import DEFAULT_ISAACLAB_VERSION
+
 
 def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
@@ -55,17 +57,9 @@ class GpuPartition:
 
 @dataclass
 class ImageProfile:
-    name: str = "base"
-    docker_image: str = "isaac-lab-base:latest"
+    """Official NGC Isaac Lab release (``nvcr.io/nvidia/isaac-lab:<version>``) used on the cluster."""
 
-
-@dataclass
-class Fingerprints:
-    """Separated so a Docker image ID is never mixed into pre-build inputs."""
-
-    build_input_fingerprint: str | None = None
-    built_image_digest: str | None = None
-    conversion_fingerprint: str | None = None
+    version: str = DEFAULT_ISAACLAB_VERSION
 
 
 @dataclass
@@ -163,7 +157,6 @@ class ClusterProfile:
     paths: ClusterPaths = field(default_factory=ClusterPaths)
     default_job: DefaultJob = field(default_factory=DefaultJob)
     image: ImageProfile = field(default_factory=ImageProfile)
-    fingerprints: Fingerprints = field(default_factory=Fingerprints)
     discovered_partitions: list[GpuPartition] = field(default_factory=list)
     user_set: list[str] = field(default_factory=list)
 
@@ -191,7 +184,6 @@ class ClusterProfile:
         paths = ClusterPaths(**_filter_fields(ClusterPaths, payload.pop("paths", {}) or {}))
         default_job = DefaultJob(**_filter_fields(DefaultJob, payload.pop("default_job", {}) or {}))
         image = ImageProfile(**_filter_fields(ImageProfile, payload.pop("image", {}) or {}))
-        fingerprints = Fingerprints(**_filter_fields(Fingerprints, payload.pop("fingerprints", {}) or {}))
         raw_parts = payload.pop("discovered_partitions", []) or []
         discovered_partitions = [
             GpuPartition(
@@ -214,7 +206,6 @@ class ClusterProfile:
             paths=paths,
             default_job=default_job,
             image=image,
-            fingerprints=fingerprints,
             discovered_partitions=discovered_partitions,
             user_set=user_set,
         )
@@ -243,7 +234,7 @@ def bonecho_defaults(*, ssh_alias: str = "bonecho") -> ClusterProfile:
             memory="32G",
             time="1h",
         ),
-        image=ImageProfile(name="base", docker_image="isaac-lab-base:latest"),
+        image=ImageProfile(),
     )
 
 

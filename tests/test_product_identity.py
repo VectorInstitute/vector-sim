@@ -3,7 +3,6 @@ from pathlib import Path
 from vector_sim.cluster.adapters import VectorSlurmAdapter
 from vector_sim.config.models import bonecho_defaults
 from vector_sim.config.store import PROFILES_DIRNAME, ConfigStore
-from vector_sim.images.state import ImageArtifactState, ImageStateStore
 from vector_sim.jobs.generate import generate_runtime
 from vector_sim.jobs.sync import GENERATED_REMOTE_SUBDIR, stage_generated_into_repo
 
@@ -38,23 +37,9 @@ def test_generated_paths_use_vector_sim(tmp_path: Path) -> None:
     assert "/home/" not in blob
 
 
-def test_images_state_readable_after_local_migration(tmp_path: Path) -> None:
+def test_config_dir_found_after_local_migration(tmp_path: Path) -> None:
     old = tmp_path / ".isaac-cluster"
     (old / "state").mkdir(parents=True)
-    (old / "artifacts").mkdir()
-    store_old = ConfigStore(old)
-    ImageStateStore(store_old).upsert(
-        ImageArtifactState(
-            image_profile="base",
-            docker_image="isaac-lab-base:latest",
-            built_image_digest="sha256:abc",
-            local_artifact_sha256="deadbeef",
-        )
-    )
     new = tmp_path / ".vector-sim"
     old.rename(new)
-    loaded = ImageStateStore(ConfigStore(new)).get("base")
-    assert loaded is not None
-    assert loaded.built_image_digest == "sha256:abc"
-    assert loaded.local_artifact_sha256 == "deadbeef"
     assert ConfigStore.locate(start=tmp_path).root == new.resolve()

@@ -16,7 +16,7 @@ class BootstrapCommand:
         self.start_dir = Path(start_dir or Path.cwd())
 
     def run(self, *, install: bool = False) -> int:
-        report = inspect_prereqs(start=self.start_dir)
+        report = inspect_prereqs()
         self.runner.emit(format_prereq_report(report))
         if install:
             self.runner.emit("")

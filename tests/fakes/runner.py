@@ -13,6 +13,7 @@ class FakeExecute:
     def __init__(self) -> None:
         self._rules: list[tuple[Matcher, CommandResult | Callable[[list[str]], CommandResult]]] = []
         self.calls: list[list[str]] = []
+        self.inputs: list[str | None] = []
 
     def add(
         self,
@@ -51,10 +52,12 @@ class FakeExecute:
         cwd: str | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
+        input_text: str | None = None,
     ) -> CommandResult:
         del cwd, env, timeout
         argv = list(args)
         self.calls.append(argv)
+        self.inputs.append(input_text)
         for matcher, result in self._rules:
             if matcher(argv):
                 if callable(result):

@@ -64,13 +64,21 @@ def test_parse_bootstrap() -> None:
     assert args.install is True
 
 
-def test_parse_build_and_push_flags() -> None:
-    build = parse_args(["build", "--image-profile", "base", "--force"])
-    assert build.command == "build"
-    assert build.force is True
-    push = parse_args(["push", "--force-convert", "--force-upload"])
-    assert push.force_convert is True
-    assert push.force_upload is True
+def test_parse_deploy_flags() -> None:
+    args = parse_args(["deploy", "--image-version", "2.3.2", "--force", "--plan"])
+    assert args.image_version == "2.3.2"
+    assert args.force is True
+    assert args.plan is True
+    assert parse_args(["deploy"]).image_version is None
+
+
+def test_build_and_push_commands_are_gone() -> None:
+    for name in ("build", "push"):
+        try:
+            parse_args([name])
+        except SystemExit:
+            continue
+        raise AssertionError(f"{name} should no longer be a command")
 
 
 def test_parse_run_requires_task() -> None:
@@ -111,8 +119,6 @@ def test_help_lists_commands() -> None:
         "auth",
         "deploy",
         "smoke-test",
-        "build",
-        "push",
         "run",
         "gui",
         "status",
@@ -133,7 +139,7 @@ def test_deploy_banner_is_visible_and_names_the_cluster(tmp_path) -> None:
     args = parse_args(["deploy", "--cluster", "killarney"])
     banner = format_command_banner(args, store)
     assert banner.splitlines()[0].startswith("=")
-    assert ">>> deploying isaac-lab-base on Killarney <<<" in banner
+    assert ">>> deploying isaac-lab-3.0.0 on Killarney <<<" in banner
     assert resolve_banner_cluster(args, store) == "killarney"
 
 

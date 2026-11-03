@@ -3,19 +3,12 @@
 from __future__ import annotations
 
 import os
-import pwd
 import shutil
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from vector_sim.local.docker_util import (
-    DOCKER_ACCESS_HINT,
-    docker_socket_accessible,
-    fakeroot_primary_group_problem,
-    primary_group_name,
-    which_docker,
-)
+from vector_sim.images.ngc import ENV_PASSWORD, ENV_USERNAME, NGC_KEY_HELP, credentials_from_env
 
 STATUS_INSTALLED = "INSTALLED"
 STATUS_REQUIRED = "REQUIRED"
@@ -24,7 +17,7 @@ STATUS_UNSUPPORTED = "UNSUPPORTED"
 
 UBUNTU_HINT = (
     "v1 bootstrap supports Ubuntu-like Linux. Other platforms: install git, ssh, "
-    "rsync, Docker, and Apptainer yourself, then re-run vector-sim bootstrap."
+    "and rsync yourself, then re-run vector-sim bootstrap."
 )
 
 
@@ -87,21 +80,7 @@ def inspect_platform(*, os_release: dict[str, str] | None = None, system: str | 
     return PlatformInfo(sysname, "linux", pretty, False, UBUNTU_HINT)
 
 
-def supplementary_groups() -> list[str]:
-    user = pwd.getpwuid(os.getuid()).pw_name
-    gids = os.getgrouplist(user, os.getgid())
-    names: list[str] = []
-    import grp
-
-    for gid in gids:
-        try:
-            names.append(grp.getgrgid(gid).gr_name)
-        except KeyError:
-            continue
-    return names
-
-
-def inspect_prereqs(*, min_free_bytes: int = 40 * 1024**3, start: Path | None = None) -> PrereqReport:
+def inspect_prereqs() -> PrereqReport:
     platform = inspect_platform()
     items: list[Prereq] = []
     py = f"{sys.version_info.major}.{sys.version_info.minor}"
@@ -132,80 +111,16 @@ def inspect_prereqs(*, min_free_bytes: int = 40 * 1024**3, start: Path | None = 
             )
         )
 
-    docker = which_docker()
-    if docker:
-        items.append(Prereq("docker", STATUS_INSTALLED, docker, required=True))
-        sock_ok = docker_socket_accessible()
-        items.append(
-            Prereq(
-                "Docker access",
-                STATUS_INSTALLED if sock_ok else STATUS_USER_ACTION,
-                docker if sock_ok else DOCKER_ACCESS_HINT,
-                install_command=None if sock_ok else f"sudo usermod -aG docker {pwd.getpwuid(os.getuid()).pw_name}",
-                required=True,
-            )
-        )
-    else:
-        items.append(
-            Prereq(
-                "docker",
-                STATUS_USER_ACTION if platform.supported_bootstrap else STATUS_REQUIRED,
-                "Docker not on PATH (Snap's /snap/bin/docker is fine)",
-                install_command="Install Docker Engine; then: sudo usermod -aG docker $USER  # logout/login required",
-                required=True,
-            )
-        )
-
-    apptainer = shutil.which("apptainer") or shutil.which("singularity")
+    creds = credentials_from_env()
     items.append(
         Prereq(
-            "apptainer",
-            STATUS_INSTALLED if apptainer else STATUS_USER_ACTION,
-            apptainer or "needed for local Docker→Apptainer conversion",
-            install_command=None
-            if apptainer
-            else "See https://apptainer.org/docs/admin/main/installation.html (do not chmod 666 docker.sock)",
-            required=True,
+            "NGC credentials",
+            STATUS_INSTALLED if creds else STATUS_USER_ACTION,
+            f"{ENV_USERNAME}/{ENV_PASSWORD} set" if creds else f"{ENV_PASSWORD} not set (needed for deploy)",
+            install_command=None if creds else NGC_KEY_HELP,
+            required=False,
         )
     )
-
-    groups = supplementary_groups()
-    primary = primary_group_name()
-    group_status = STATUS_INSTALLED
-    group_required = False
-    group_cmd = None
-    if primary == "docker":
-        group_status = STATUS_USER_ACTION
-        group_required = True
-        group_cmd = fakeroot_primary_group_problem(primary)
-    elif docker and "docker" not in groups:
-        group_status = STATUS_USER_ACTION
-        group_cmd = f"sudo usermod -aG docker {pwd.getpwuid(os.getuid()).pw_name}  # then logout/login"
-    items.append(
-        Prereq(
-            "groups",
-            group_status,
-            f"primary={primary} supplementary={','.join(groups)}",
-            install_command=group_cmd,
-            required=group_required,
-        )
-    )
-
-    root = Path(start or Path.cwd())
-    try:
-        free = shutil.disk_usage(root).free
-        gb = free / 1024**3
-        enough = free >= min_free_bytes
-        items.append(
-            Prereq(
-                "disk",
-                STATUS_INSTALLED if enough else STATUS_USER_ACTION,
-                f"{gb:.1f} GiB free at {root} (conversion may need ~{min_free_bytes / 1024**3:.0f} GiB)",
-                required=False,
-            )
-        )
-    except OSError as exc:
-        items.append(Prereq("disk", STATUS_USER_ACTION, str(exc), required=False))
 
     if not platform.supported_bootstrap:
         items.append(
@@ -234,5 +149,5 @@ def format_prereq_report(report: PrereqReport) -> str:
             lines.append(f"{'':<20} command: {item.install_command}")
     lines.append("")
     lines.append("vector-sim never runs sudo unless you copy-paste a command yourself.")
-    lines.append("Do not use newgrp docker, chmod 666 /var/run/docker.sock, or sudo for the whole workflow.")
+    lines.append("Docker is not needed: the Isaac Lab image is pulled on the cluster with Apptainer.")
     return "\n".join(lines)
