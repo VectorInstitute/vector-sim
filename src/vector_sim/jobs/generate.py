@@ -30,6 +30,24 @@ PERSISTENT_CACHE_BINDS = (
     ("documents", "${DOCKER_USER_HOME}/Documents"),
 )
 
+# Isaac Lab 3.x images keep torch/isaaclab in a uv venv (/opt/isaaclab-venv) that
+# only isaaclab.sh -p selects; /isaac-sim/python.sh is bare Kit Python there.
+# isaaclab.sh -p also works on 2.x images, where it falls back to _isaac_sim/python.sh.
+ISAACLAB_PYTHON = "/workspace/isaaclab/isaaclab.sh -p"
+
+# The synced checkout is bound over the image's /workspace/isaaclab, hiding the
+# image's _isaac_sim symlink and logs/ directory. isaaclab.sh needs the former,
+# and Apptainer needs the latter as the mount point for the persistent logs bind.
+IMAGE_VENV_PYTHON = "/opt/isaaclab-venv/bin/python"
+PYDEPS_MOUNT = "/opt/vector-sim-pydeps"
+# Only what the 3.x image venv lacks; numpy, imageio, pillow, etc. come from the venv.
+VIDEO_PACKAGES = "'moviepy>=1.0.3,<2.0.0.dev0' proglog imageio-ffmpeg"
+
+PREPARE_SOURCE_COPY = (
+    'mkdir -p "$TMPDIR/$dir_name/logs"\n'
+    'ln -sfn /isaac-sim "$TMPDIR/$dir_name/_isaac_sim"'
+)
+
 
 @dataclass
 class GeneratedRuntime:
@@ -236,6 +254,11 @@ def render_run_singularity(profile: ClusterProfile) -> str:
     bind_block = "\n".join(bind_lines)
     logs_bind = "$CLUSTER_ISAACLAB_DIR/logs"
     exec_flags = flags if flags else ""
+    if "--containall" in exec_flags:
+        # --containall gives the container a tiny tmpfs $HOME; Warp's kernel cache and
+        # Kit write there. A per-job home on node-local $TMPDIR avoids ENOSPC and
+        # keeps concurrent jobs apart.
+        exec_flags = f"{exec_flags} --home $TMPDIR/container-home"
     flags_line = f"    {exec_flags} $SIF \\" if exec_flags else "    $SIF \\"
     return f"""#!/usr/bin/env bash
 set -e
@@ -273,6 +296,8 @@ touch "$CLUSTER_ISAACLAB_DIR/logs/.keep"
 
 cp -r $1 $TMPDIR
 dir_name=$(basename "$1")
+{PREPARE_SOURCE_COPY}
+mkdir -p "$TMPDIR/container-home"
 
 # The SIF is pulled from NGC by `vector-sim deploy` and run in place.
 SIF="$CLUSTER_SIF_PATH/$2.sif"
@@ -281,12 +306,28 @@ if [ ! -s "$SIF" ]; then
     exit 1
 fi
 
+# Isaac Lab 3.x images ship without MoviePy, which --video needs. Install it once
+# into persistent scratch (not the cache dir, which is copied per job). Packages
+# the image venv already provides are not reinstalled.
+PYDEPS="$CLUSTER_ISAACLAB_DIR/python-deps/video"
+mkdir -p "$PYDEPS"
+case " ${{*:3}} " in
+    *" --video "*)
+        if [ ! -f "$PYDEPS/.installed" ]; then
+            {command} exec {exec_flags} -B "$PYDEPS:{PYDEPS_MOUNT}:rw" $SIF \\
+                bash -c "if [ -x {IMAGE_VENV_PYTHON} ] && ! {IMAGE_VENV_PYTHON} -c 'import moviepy' 2>/dev/null; then cd /tmp && uv pip install --no-cache --python {IMAGE_VENV_PYTHON} --target {PYDEPS_MOUNT} --no-deps {VIDEO_PACKAGES}; fi" \\
+                && touch "$PYDEPS/.installed"
+        fi
+        ;;
+esac
+
 {command} exec \\
 {bind_block}
     -B $TMPDIR/$dir_name:/workspace/isaaclab:rw \\
     -B {logs_bind}:/workspace/isaaclab/logs:rw \\
+    -B $PYDEPS:{PYDEPS_MOUNT}:ro \\
 {flags_line}
-    bash -c "export ISAACLAB_PATH=/workspace/isaaclab && cd /workspace/isaaclab && /isaac-sim/python.sh ${{CLUSTER_PYTHON_EXECUTABLE}} ${{@:3}}"
+    bash -c "export PYTHONPATH={PYDEPS_MOUNT}\\${{PYTHONPATH:+:\\$PYTHONPATH}} && export ISAACLAB_PATH=/workspace/isaaclab && cd /workspace/isaaclab && {ISAACLAB_PYTHON} ${{CLUSTER_PYTHON_EXECUTABLE}} \\"\\$@\\"" bash "${{@:3}}"
 
 rsync -azPv $TMPDIR/docker-isaac-sim $CLUSTER_ISAAC_SIM_CACHE_DIR/..
 

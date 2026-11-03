@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from vector_sim.cluster.slurm import gres_request, slurm_time
 from vector_sim.config.models import ClusterProfile, DefaultJob
 from vector_sim.images.naming import DEFAULT_ISAACLAB_VERSION, image_stem, validate_version
+
+# Isaac Lab 2.x ships one train.py per RL library; 3.x replaces them with a single
+# dispatcher that selects the library through --rl_library.
+LEGACY_RSL_RL_TRAIN = "scripts/reinforcement_learning/rsl_rl/train.py"
+UNIFIED_TRAIN = "scripts/reinforcement_learning/train.py"
 
 
 @dataclass
@@ -20,7 +26,7 @@ class JobSpec:
     cpus: int = 8
     memory: str = "32G"
     time: str = "1h"
-    python_executable: str = "scripts/reinforcement_learning/rsl_rl/train.py"
+    python_executable: str = LEGACY_RSL_RL_TRAIN
     video: bool = False
     video_length: int = 200
     video_interval: int = 1000
@@ -93,4 +99,31 @@ def expand_train_args(spec: JobSpec) -> list[str]:
             ]
         )
     args.extend(spec.extra_args)
+    return args
+
+
+def is_isaaclab3_checkout(repo: Path) -> bool:
+    repo = Path(repo)
+    return (repo / UNIFIED_TRAIN).is_file() and not (repo / LEGACY_RSL_RL_TRAIN).is_file()
+
+
+# Isaac Lab 3.x runs headless unless --visualizer is given, and --video enables
+# cameras itself; passing either flag is an argparse error there.
+ISAACLAB3_REMOVED_FLAGS = ("--headless", "--enable_cameras")
+
+
+def adapt_to_checkout(spec: JobSpec, train_args: list[str], repo: Path) -> list[str]:
+    """Adapt 2.x-style train args to an Isaac Lab 3.x checkout.
+
+    Points the legacy rsl_rl default at the unified train.py (selecting rsl_rl) and
+    drops launcher flags 3.x removed. Returns the train args to submit; updates
+    spec.python_executable in place. 2.x checkouts are returned unchanged.
+    """
+    if not is_isaaclab3_checkout(repo):
+        return train_args
+    args = [a for a in train_args if a not in ISAACLAB3_REMOVED_FLAGS]
+    if spec.python_executable == LEGACY_RSL_RL_TRAIN:
+        spec.python_executable = UNIFIED_TRAIN
+        if "--rl_library" not in args:
+            args = ["--rl_library", "rsl_rl", *args]
     return args

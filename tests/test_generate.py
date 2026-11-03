@@ -143,3 +143,68 @@ def test_runner_uses_pulled_sif_in_place_without_extraction() -> None:
         assert "tar -xf" not in runner
         assert ".tar" not in runner
         assert "$SIF" in runner
+
+
+def test_runner_launches_through_isaaclab_venv_with_prepared_copy() -> None:
+    # Isaac Lab 3.x images keep torch in /opt/isaaclab-venv, reachable only via
+    # isaaclab.sh -p, which needs _isaac_sim in the bound checkout. The bound
+    # checkout also needs logs/ as the mount point for the persistent logs bind.
+    profile = bonecho_defaults()
+    profile.remote_user = "alice"
+    profile.scratch_dir = "/scratch/alice"
+    VectorSlurmAdapter().derive_scratch_paths(profile)
+    for gui in (False, True):
+        runner = generate_runtime(profile, gui=gui).run_singularity
+        assert "/isaac-sim/python.sh" not in runner
+        assert "/workspace/isaaclab/isaaclab.sh -p" in runner
+        assert 'mkdir -p "$TMPDIR/$dir_name/logs"' in runner
+        assert 'ln -sfn /isaac-sim "$TMPDIR/$dir_name/_isaac_sim"' in runner
+        assert "@@" not in runner
+        prepare = runner.index('ln -sfn /isaac-sim "$TMPDIR/$dir_name/_isaac_sim"')
+        assert prepare > runner.index("dir_name=$(basename")
+        assert prepare < runner.index("exec \\")
+
+
+def test_runner_forwards_every_train_argument_into_container(tmp_path: Path) -> None:
+    # "${@:3}" inside the bash -c string kept only the first argument; the rest
+    # became the inner shell's $0, $1, ... and were dropped.
+    profile = bonecho_defaults()
+    profile.remote_user = "alice"
+    profile.scratch_dir = "/scratch/alice"
+    VectorSlurmAdapter().derive_scratch_paths(profile)
+    runner = generate_runtime(profile).run_singularity
+    line = next(l for l in runner.splitlines() if "isaaclab.sh -p ${CLUSTER_PYTHON_EXECUTABLE}" in l)
+    fake = tmp_path / "fake.sh"
+    fake.write_text(
+        "set -- run container --rl_library rsl_rl --task 'A B'\n"
+        + re.sub(r"export PYTHONPATH=\S+ && ", "", line)
+        .replace("cd /workspace/isaaclab && ", "")
+        .replace("export ISAACLAB_PATH=/workspace/isaaclab && ", "")
+        .replace("/workspace/isaaclab/isaaclab.sh -p ${CLUSTER_PYTHON_EXECUTABLE}", "printf '<%s>'")
+    )
+    out = subprocess.run(["bash", str(fake)], capture_output=True, text=True, check=True).stdout
+    assert out == "<--rl_library><rsl_rl><--task><A B>"
+
+
+def test_runner_installs_video_deps_once_outside_copied_cache() -> None:
+    profile = bonecho_defaults()
+    profile.remote_user = "alice"
+    profile.scratch_dir = "/scratch/alice"
+    VectorSlurmAdapter().derive_scratch_paths(profile)
+    runner = generate_runtime(profile).run_singularity
+    assert 'PYDEPS="$CLUSTER_ISAACLAB_DIR/python-deps/video"' in runner
+    assert '*" --video "*)' in runner
+    assert "--no-deps 'moviepy>=1.0.3,<2.0.0.dev0' proglog imageio-ffmpeg" in runner
+    assert 'touch "$PYDEPS/.installed"' in runner
+    assert "-B $PYDEPS:/opt/vector-sim-pydeps:ro" in runner
+    assert "export PYTHONPATH=/opt/vector-sim-pydeps" in runner
+
+
+def test_contained_runner_gets_a_real_home() -> None:
+    profile = bonecho_defaults()
+    profile.remote_user = "alice"
+    profile.scratch_dir = "/scratch/alice"
+    VectorSlurmAdapter().derive_scratch_paths(profile)
+    runner = generate_runtime(profile).run_singularity
+    assert "--containall --writable-tmpfs --home $TMPDIR/container-home $SIF" in runner
+    assert 'mkdir -p "$TMPDIR/container-home"' in runner

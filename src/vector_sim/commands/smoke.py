@@ -11,12 +11,19 @@ from vector_sim.commands.run import RunCommand
 from vector_sim.config.store import ConfigStore
 from vector_sim.config.store import ConfigStore
 from vector_sim.exec import CommandRunner
-from vector_sim.commands.common import require_cluster_profile
+from vector_sim.commands.common import require_cluster_profile, resolve_isaaclab
+from vector_sim.jobs.args import is_isaaclab3_checkout
 from vector_sim.jobs.status import TERMINAL_STATES, JobStatus, normalize_state, probe_job
 from vector_sim.jobs.videos import find_videos_command, parse_find_videos
 from vector_sim.ssh.session import SshSession
 
 SMOKE_TASK = "Isaac-Cartpole-v0"
+# Isaac Lab 3.x registers task ids without the gymnasium version suffix.
+SMOKE_TASK_V3 = "Isaac-Cartpole"
+
+
+def smoke_task(repo: Path) -> str:
+    return SMOKE_TASK_V3 if is_isaaclab3_checkout(repo) else SMOKE_TASK
 
 
 @dataclass
@@ -74,7 +81,7 @@ class SmokeTestCommand:
         before = {j.job_id for j in self.store.load_jobs()}
         code = RunCommand(self.runner, self.store, start_dir=self.start_dir).run(
             cluster=cluster,
-            task=SMOKE_TASK,
+            task=smoke_task(resolve_isaaclab(profile.isaaclab_path, self.start_dir)),
             image_version=None,
             video=video,
             video_length=200,

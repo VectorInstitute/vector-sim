@@ -13,7 +13,7 @@ from vector_sim.config.store import ConfigStore
 from vector_sim.errors import ConfigError, VectorSimError
 from vector_sim.exec import CommandRunner
 from vector_sim.commands.common import require_cluster_profile, resolve_isaaclab
-from vector_sim.jobs.args import resolve_job_spec
+from vector_sim.jobs.args import is_isaaclab3_checkout, resolve_job_spec
 from vector_sim.jobs.generate import GUI_BOOTSTRAP_NAME, generate_runtime, load_docker_env_base
 from vector_sim.jobs.gui import (
     GUI_PYTHON,
@@ -75,6 +75,8 @@ class GuiCommand:
             headless=False,
         )
         repo = resolve_isaaclab(profile.isaaclab_path, self.start_dir)
+        # Isaac Lab 3.x stays headless unless a Kit viewport is requested.
+        gui_args = ["--viz", "kit"] if is_isaaclab3_checkout(repo) else []
         session = SshSession(
             profile.ssh_alias,
             self.runner,
@@ -129,7 +131,7 @@ class GuiCommand:
             remote_run_dir=remote_dir,
             submit_script=remote_submit_path(remote_dir),
             container_name=spec.container_name,
-            train_args=[],
+            train_args=gui_args,
         )
         job_id = parse_sbatch_job_id(result.stdout + "\n" + result.stderr)
         if not job_id:
@@ -153,7 +155,7 @@ class GuiCommand:
             memory=spec.memory,
             time=spec.resolved_time,
             python_executable=script,
-            train_args=[],
+            train_args=gui_args,
             gui=True,
             gui_status="submitted",
         )

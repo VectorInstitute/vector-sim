@@ -11,7 +11,7 @@ from vector_sim.errors import ConfigError, VectorSimError
 from vector_sim.exec import CommandRunner
 from vector_sim.commands.common import require_cluster_profile, resolve_isaaclab
 from vector_sim.images.naming import remote_sif_name
-from vector_sim.jobs.args import JobSpec, expand_train_args, resolve_job_spec
+from vector_sim.jobs.args import JobSpec, adapt_to_checkout, expand_train_args, resolve_job_spec
 from vector_sim.jobs.generate import (
     ENV_NAME,
     RUNNER_NAME,
@@ -42,7 +42,7 @@ class RunCommand:
         self._preflight(profile, session, spec)
 
         remote_dir = remote_run_path(profile)
-        train_args = expand_train_args(spec)
+        train_args = adapt_to_checkout(spec, expand_train_args(spec), repo)
         docker_env = load_docker_env_base(repo)
         # Per-run submit with resource overrides; logs land in the run dir by cwd.
         generated = generate_runtime(
@@ -53,6 +53,7 @@ class RunCommand:
             cpus=spec.cpus,
             memory=spec.memory,
             time=spec.time,
+            python_executable=spec.python_executable,
         ).as_dict()
 
         planned = sync_run_directory(

@@ -2,105 +2,244 @@
 
 Vector Sim deploys reproducible Isaac Lab workloads to SLURM clusters over SSH
 and Apptainer. It supports both **Bonecho** and **Killarney**. Cluster behavior
-and paths are discovered during onboarding.
+and paths are discovered during onboarding. Vector Sim supports Isaac Lab v3.0.0 by default. For other versions please see [Isaac Sim Version Guide](ISAACLAB_VERSIONS.md)
 
-The tool uses NVIDIA's **official Isaac Lab container** from NGC. There is
-nothing to build locally and no Docker is needed anywhere: the image is pulled
-directly on the cluster with Apptainer.
 
-The tool generates its own runtime wrappers; do **not** edit Isaac Lab's
-`docker/cluster/` scripts. Ordinary changes under Isaac Lab's `source/` or
-`scripts/` directories are synchronized per job and never touch the image.
-Make sure rhe Isaac Lab version that you clone matches the Docker Image that you pull with `deploy`.
+# Quick Setup: run Isaac Lab on Bon Echo with vector-sim
 
-## Quick start: use NVIDIA's Isaac Lab image on the cluster
+This is a step-by-step guide from zero to a running Isaac Lab job. For a more detailed documentation of each step, please refer to the [detailed installation guide](#detailed-installation-guide)
 
-Docker does not work on the clusters, so the official image is pulled with
-**Apptainer** instead. Vector Sim automates this end to end.
+## The big picture
 
-1. **Create an NVIDIA NGC account** (free) at <https://ngc.nvidia.com> and
-   generate an API key at <https://org.ngc.nvidia.com/setup/api-keys>.
+Isaac Lab needs a GPU, a lot of specific software, and a way to run on a shared
+cluster. vector-sim glues together four things so you don't have to:
 
-2. **Pick the Isaac Lab version** you want from the
-   [Isaac Lab catalog page](https://catalog.ngc.nvidia.com/orgs/nvidia/containers/isaac-lab/tags).
-   Each tag is a release, for example
-   `nvcr.io/nvidia/isaac-lab:2.3.2` (the default).
-
-3. **Export your NGC credentials** on the machine where you run `vector-sim`.
-   For NGC the username is the literal string `$oauthtoken` (keep the single
-   quotes) and the password is your API key:
-
-   ```bash
-   export APPTAINER_DOCKER_USERNAME='$oauthtoken'
-   export APPTAINER_DOCKER_PASSWORD='<your NGC API key>'
-   ```
-
-   If you only set `APPTAINER_DOCKER_PASSWORD`, the username defaults to
-   `$oauthtoken`. The key is sent to the cluster over SSH stdin for the pull;
-   it is never put on a command line, in a file, or in the profile. You can also save your credentials in `~/.bashrc`.
-
-4. **Choose your Isaac Lab Version to Match the Docker Image**
-   Before everything, decide what version you want to install and work with. Clone the correct version manually at a selected path. We suggest that you clone it in the same parent directory as `vector-sim`.
-   The lates version as of October 2026 is v3.0.0.
-   ```bash
-   cd ..
-   git clone --branch v3.0.0 https://github.com/isaac-sim/IsaacLab.git IsaacLab
-   ```
-   Then pass that path to onboard.
-
-5. **Pull the image and run Isaac Lab:**
-   Before pulling the image, make sure to configure your SSH by modifying `~/.ssh/config` according to the guide.
-   Then run :
-
-   ```bash
-   source ./activate.sh
-   vector-sim --version
-   vector-sim auth bonecho
-   # OR
-   vector-sim auth killarney
-   ```
-   After authentication is complete, run:
-   
-   ```bash
-   vector-sim onboard bonecho --isaaclab /absolute/path/to/IsaacLab  # once per cluster (see section 3)
-   ```
-
-   ```bash
-
-   # type exit in terminal to get back to the workflow
-   vector-sim deploy --cluster bonecho --image-version 3.0.0    # or another release
-   vector-sim run --cluster bonecho --task Isaac-Cartpole
-   ```
-
-   `deploy` runs `apptainer pull docker://nvcr.io/nvidia/isaac-lab:<version>` on
-   the cluster and stores `isaac-lab-<version>.sif` under the profile's
-   containers directory (about 20 GiB; plan for ~40 GiB free while it
-   converts). It is skipped when the SIF is already there; `--force` re-pulls.
-   `deploy --plan` shows what would happen without pulling.
-
-   The image will be automatically pulled and saved at your `/scratch/$USER_ID$`. Before running `deploy`, you can change the default destination of the image to a directory with more available space if you want. In order to do that, change `paths.containers` in `vector-sim/.vector-sim/bonecho.yaml` and add `- paths.containers` under `user_set`.
-
-To do the same pull by hand on a cluster login node:
-
-```bash
-module load apptainer
-export APPTAINER_DOCKER_USERNAME='$oauthtoken'
-export APPTAINER_DOCKER_PASSWORD='<your NGC API key>'
-apptainer pull isaac-lab-2.3.2.sif docker://nvcr.io/nvidia/isaac-lab:3.0.0 
+```
+ You type commands            Login node                 Compute node (GPU)
+ ┌──────────────┐  ssh   ┌─────────────────┐  sbatch  ┌───────────────────────┐
+ │  vector-sim  │ ─────► │ SLURM scheduler │ ───────► │ Apptainer container   │
+ │  (the tool)  │        │ files + image   │          │  = Isaac Sim + Lab    │
+ └──────────────┘        └─────────────────┘          │  runs your code       │
+                                                      └───────────────────────┘
 ```
 
-5. **If you have already deployed vector-sim:**
-Repeat the authentication step:
+| Piece | What it is | 
+| --- | --- |
+| **vector-sim** | A small Python CLI (no install needed). It runs the other steps for you. |
+| **Isaac Lab (git clone)** | Your code: tasks, training scripts. | 
+| **The container image (`.sif`)** | NVIDIA's official Isaac Lab, packaged as one ~12 GB file. Nothing is installed on cluster. |
+| **Apptainer** | The container runtime (Docker isn't allowed on HPC). Opens the `.sif` on the GPU node. |  
+
+Every time you `vector-sim run`, it copies your Isaac Lab code to a specified location (scratch by default),
+writes a SLURM job script, submits it, and the job starts the container with
+your code mounted in. **You edit code, not the image.**
+
+## Where do I run this? (read this first)
+
+**Run every `vector-sim` command on your own computer (laptop or desktop),
+not on the cluster.**
+
+```
+ YOUR LAPTOP  (write your code)          COMPUTE CLUSTER (it runs here)
+ ┌──────────────────────────────────┐   ssh    ┌──────────────────────────────┐
+ │ vector-sim/   <- the tool        │ ───────► │ image (.sif), SLURM, GPUs    │
+ │ IsaacLab/     <- your code       │  rsync   │ code copied here per job     │
+ │ NGC key, SSH config              │ ───────► │ logs and videos land here    │
+ └──────────────────────────────────┘ ◄─────── └──────────────────────────────┘
+                                       videos
+```
+
+- The tool is a remote control. It logs into the cluster for you, so there is
+  no need to log in first.
+- Your Isaac Lab clone lives on the laptop and is copied to the cluster for
+  each job.
+- The heavy parts (downloading the image, running on GPUs) happen on the
+  cluster automatically.
+- `pull-video` downloads results back to the machine you run it on.
+
+**Suggestion: Do not** run vector-sim while logged into the cluster (login node, VS Code
+Remote-SSH, `srun`/`salloc`). The cluster would SSH into itself. That can be made to work
+(see the note in step 5) but needs extra SSH tweaks and is the main source of
+confusion. Never run it from a compute node.
+
+Each step below is tagged **[laptop]** (your computer) or **[browser]**.
+Nothing in this guide asks you to type on the cluster.
+
+Your laptop needs: Linux, macOS, or Windows with WSL; `git`, `ssh`, `rsync`;
+[`uv`](https://docs.astral.sh/uv/getting-started/installation/) (it provides Python 3.10+ and PyYAML inside a project-local venv).
+Docker is **not** needed.
+
+## One-time setup (6 steps)
+
+Do these once. Steps 1-2 are things only you can do (accounts, keys).
+
+### 1. Get an NVIDIA NGC API key  [browser]
+The container comes from NVIDIA's registry, which needs a free login.
+1. Sign up at <https://ngc.nvidia.com>.
+2. Create a key at <https://org.ngc.nvidia.com/setup/api-keys>.
+
+### 2. Put the key in your shell  [laptop]
+Add to `~/.bashrc` (or `~/.zshrc` on macOS), then source it:
+
+```bash
+export APPTAINER_DOCKER_USERNAME='$oauthtoken'   # literal text, keep the single quotes
+export APPTAINER_DOCKER_PASSWORD='<your NGC API key>'
+```
+
+### 3. Get vector-sim and activate it  [laptop]
+```bash
+git clone git@github.com:VectorInstitute/vector-sim.git
+cd vector-sim
+uv sync                       # creates ./.venv with PyYAML (nothing global)
+source ./activate.sh          # adds `vector-sim` to your PATH for this shell
+vector-sim --version
+```
+`uv` is a fast Python package manager ([install](https://docs.astral.sh/uv/getting-started/installation/)).
+`vector-sim` automatically uses the `.venv` that `uv sync` created, so you don't
+need to activate the venv yourself.
+
+### 4. Clone Isaac Lab, matching the image version  [laptop]
+The code you clone and the container you pull **must be the same version**,
+otherwise you will get confusing errors.
+```bash
+cd ..    # clone next to vector-sim
+git clone --branch v3.0.0 https://github.com/isaac-sim/IsaacLab.git IsaacLab
+```
+(`v3.0.0` here goes with `--image-version 3.0.0` in step 6.)
+
+### 5. Tell SSH how to reach the cluster, and log in  [laptop]
+vector-sim talks to the cluster through `ssh bonecho`, so that alias must exist.
+It never edits your SSH config. Add to `~/.ssh/config` **on your laptop**:
+
+```sshconfig
+Host bonecho
+    HostName bonecho.vectorinstitute.ai
+    User <your-user>
+    ControlMaster auto
+    ControlPersist 10m
+    ControlPath ~/.ssh/cm-%C
+
+Host killarney
+    HostName killarney.alliancecan.ca
+    User <your-user>
+    ControlMaster auto
+    ControlPersist 10m
+    ControlPath ~/.ssh/cm-%C
+```
 
 
-Then run doctor to make sure Image also is pulled. You should see 
+Now log in once, answering the MFA prompt:
+```bash
+vector-sim auth bonecho
+# you land in an ssh shell on the cluster -> type `exit` to come back
+```
 
-Overall:
-  READY
+<details>
+<summary>Advanced: running from the cluster login node instead (not recommended)</summary>
 
-This guide uses `<cluster>` where the value is either `bonecho` or
-`killarney`. Operational examples always pass `--cluster` so it is clear where
-the command runs.
+From inside the cluster the public name times out, so point the alias at the
+internal login node and use a short `ControlPath`:
+```sshconfig
+Host bonecho
+    HostName blogin02.becho.vectorinstitute.ai
+    User <your-user>
+    ControlMaster auto
+    ControlPersist 10m
+    ControlPath /tmp/ssh-cm-%r@%h-%p
+```
+Everything else is the same, except the paths (`IsaacLab`, `vector-sim`) are
+cluster paths. Use this only if you have no way to run locally.
+</details>
+
+This keeps an open connection (`ControlPersist 10m`) so later commands don't
+ask for MFA again. **It expires** after ~10 idle minutes; rerun `auth` when
+any command says "Permission denied" or "BatchMode".
+
+### 6. Onboard, pull the image, verify  [laptop]
+
+#### **onboard** inspects the cluster (scratch path, GPU partitions, Apptainer
+  module) and writes a profile to `.vector-sim/bonecho.yaml`.
+
+```bash
+vector-sim onboard bonecho --isaaclab /absolute/path/to/IsaacLab   # path on YOUR laptop
+```
+#### **deploy** downloads the image onto the cluster (~12-20 GB, takes a while,
+  needs ~40 GB free while converting). It is skipped if already there.
+  `deploy --plan` previews without downloading.
+> **Where does the image go?** By default under your `/scratch/<user>/`.
+> Scratch is small (94 GB total here), so you can move it to project space by
+> setting `paths.containers` in `.vector-sim/bonecho.yaml` and adding
+> `- paths.containers` under `user_set:` in the same file, **before** running
+> `deploy`. Check the remaining storage by running`df -h` first.
+
+```bash
+vector-sim deploy  --cluster bonecho --image-version 3.0.0
+```
+
+#### **doctor** runs every check. 
+You want to see:
+  Overall:
+    READY
+
+```bash
+vector-sim doctor  --cluster bonecho
+```
+
+
+## Everyday use  [laptop]
+
+```bash
+source ./activate.sh                      # once per new shell
+vector-sim auth bonecho                   # only if MFA expired, run exit after auth is done
+
+vector-sim run --cluster bonecho --task Isaac-Cartpole      # submit a training job
+vector-sim status --cluster bonecho                          # what's running?
+vector-sim logs --cluster bonecho <job-id> --follow       # watch output
+vector-sim cancel --cluster bonecho <job-id>                # stop the job
+
+vector-sim videos --cluster bonecho                         # list recorded MP4s
+vector-sim pull-video --cluster bonecho --latest            # download newest
+```
+
+**Smoke test** (recommended the first time; trains Cartpole and records a video):
+```bash
+vector-sim smoke-test --cluster bonecho --video
+```
+A healthy run ends `COMPLETED`, exit code `0:0`.
+
+**Interactive GUI in your browser:**
+```bash
+vector-sim gui --cluster bonecho --time 3h
+```
+It prints an `ssh -N -L ...` command and a `http://127.0.0.1:<port>/vnc.html...`
+URL. Leave the ssh command running and open the URL.
+
+**Change resources per job:**
+```bash
+vector-sim run --cluster bonecho --task Isaac-Cartpole \
+  --partition a100_b1 --gpu a100 --gpus 1 --cpus 8 --memory 32G --time 2h --headless
+```
+Default is 1x A40 on `a40_b1`, 8 CPUs, 32 GB, 1 hour. Other partitions
+(`a100_b*`, `rtx6000_b*`) are listed in `.vector-sim/bonecho.yaml`.
+You can manually edit `default_job` in `.vector-sim/bonecho.yaml` or pass it with the command:
+
+```bash
+vector-sim gui --cluster bonecho --time 3h --partition rtx6000_b1 --gpu rtx6000
+```
+
+You can pass python executables to run your own scene, for example:
+```bash
+vector-sim gui --cluster bonecho --time 1h --python-executable scripts/tutorials/00_sim/spawn_prims.py
+
+```
+
+When you're done, close the tunnel and free the GPU:
+
+```bash
+vector-sim cancel <Job-ID>
+```
+
+# Detailed Installation Guide
 
 ## 1. Install the package
 
@@ -111,28 +250,25 @@ git clone git@github.com:VectorInstitute/vector-sim.git
 cd vector-sim
 ```
 
-Vector Sim does not require a virtual environment or `pip install`. Source the
-repository setup script once:
+Vector Sim uses a project-local [uv](https://docs.astral.sh/uv/) environment,
+so nothing is installed globally. Create it once, then source the setup script:
 
 ```bash
+uv sync                  # creates ./.venv with PyYAML
 source ./activate.sh
 vector-sim --version
 ```
 
-To make the command available in every Bash session, add the **absolute** path
-to `~/.bashrc`:
+To make the command available in every shell, add the **absolute** path to
+`~/.bashrc` (or `~/.zshrc` on macOS):
 
 ```bash
-echo 'source /absolute/path/to/vector-sim/activate.sh' >> ~/.bashrc
-source ~/.bashrc
+echo 'source /absolute/path/to/vector-sim/activate.sh' >> ~/.zshrc
+source ~/.zshrc
 ```
 
-The launcher uses system `python3` and expects Python 3.10+ and PyYAML. On
-Ubuntu, install PyYAML only if the launcher reports it missing:
-
-```bash
-sudo apt install python3-yaml
-```
+The launcher automatically uses `./.venv/bin/python` when it exists, and falls
+back to system `python3` (3.10+ with PyYAML) otherwise.
 
 ## 2. Local setup
 
@@ -345,7 +481,7 @@ vector-sim pull-video --cluster <cluster> --latest
 | Problem | Next step |
 | --- | --- |
 | `vector-sim` not found | `source /absolute/path/to/vector-sim/activate.sh` |
-| PyYAML missing | `sudo apt install python3-yaml` |
+| PyYAML missing | `uv sync` in the vector-sim directory |
 | `APPTAINER_DOCKER_PASSWORD is not set` | Export your NGC API key; see the quick start |
 | NGC rejected the credentials (401) | Username must be the literal `$oauthtoken` (single-quoted); regenerate the API key if needed |
 | Tag not found | Pick a tag from the [NGC tags page](https://catalog.ngc.nvidia.com/orgs/nvidia/containers/isaac-lab/tags) |

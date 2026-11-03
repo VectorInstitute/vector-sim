@@ -237,3 +237,15 @@ def test_version_classify() -> None:
     assert compat.classification == "compatible"
     unknown = classify_tool_version(name="SLURM", found=None, tested="x")
     assert unknown.classification == "unknown"
+
+
+def test_smoke_task_matches_isaaclab_major_version(tmp_path) -> None:
+    from vector_sim.commands.smoke import SMOKE_TASK, SMOKE_TASK_V3, smoke_task
+    from vector_sim.jobs.args import LEGACY_RSL_RL_TRAIN, UNIFIED_TRAIN
+
+    (tmp_path / UNIFIED_TRAIN).parent.mkdir(parents=True)
+    (tmp_path / UNIFIED_TRAIN).write_text("")
+    assert smoke_task(tmp_path) == SMOKE_TASK_V3
+    (tmp_path / LEGACY_RSL_RL_TRAIN).parent.mkdir(parents=True)
+    (tmp_path / LEGACY_RSL_RL_TRAIN).write_text("")
+    assert smoke_task(tmp_path) == SMOKE_TASK

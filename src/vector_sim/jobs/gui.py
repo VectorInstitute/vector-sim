@@ -12,6 +12,7 @@ import shlex
 from dataclasses import dataclass, field
 
 from vector_sim.config.models import JobRecord
+from vector_sim.jobs.generate import ISAACLAB_PYTHON, PREPARE_SOURCE_COPY
 
 # Proven by the Bonecho noVNC spike. Do not compile these on every job.
 LIBVNC_VERSION = "0.9.15"
@@ -568,6 +569,7 @@ mkdir -p "$CLUSTER_ISAACLAB_DIR/logs"
 touch "$CLUSTER_ISAACLAB_DIR/logs/.keep"
 cp -r "$RUN_DIR" "$TMPDIR"
 dir_name=$(basename "$RUN_DIR")
+@@PREPARE_SOURCE_COPY@@
 SIF="$CLUSTER_SIF_PATH/$CONTAINER.sif"
 [ -s "$SIF" ] || fail ISAAC_GUI_FAILED "container not found: $SIF (run: vector-sim deploy)" 79
 
@@ -591,7 +593,7 @@ if ! @@COMMAND@@ exec \
     -B $CLUSTER_ISAACLAB_DIR/logs:/workspace/isaaclab/logs:rw \
     -B "$GUI_LOG_DIR:$GUI_LOG_DIR:rw" \
 @@SIF@@
-    bash -lc "export LD_LIBRARY_PATH=/.singularity.d/libs:\${LD_LIBRARY_PATH:-} && /isaac-sim/python.sh \"$GUI_LOG_DIR/cuda_probe.py\"" \
+    bash -lc "export LD_LIBRARY_PATH=/.singularity.d/libs:\${LD_LIBRARY_PATH:-} && @@ISAACLAB_PYTHON@@ \"$GUI_LOG_DIR/cuda_probe.py\"" \
     >"$GUI_LOG_DIR/cuda.log" 2>&1; then
     fail GPU_UNHEALTHY "CUDA health gate command failed" 77
 fi
@@ -649,7 +651,7 @@ echo "GUI_STAGE=isaac"
     -B $CLUSTER_ISAACLAB_DIR/logs:/workspace/isaaclab/logs:rw \
     -B /tmp/.X11-unix:/tmp/.X11-unix \
 @@SIF@@
-    bash -lc "export DISPLAY=$DISPLAY && export HEADLESS=0 && unset LIVESTREAM && export ISAACLAB_PATH=/workspace/isaaclab && cd /workspace/isaaclab && /isaac-sim/python.sh $CLUSTER_PYTHON_EXECUTABLE$EXTRA_QUOTED" \
+    bash -lc "export DISPLAY=$DISPLAY && export HEADLESS=0 && unset LIVESTREAM && export ISAACLAB_PATH=/workspace/isaaclab && cd /workspace/isaaclab && @@ISAACLAB_PYTHON@@ $CLUSTER_PYTHON_EXECUTABLE$EXTRA_QUOTED" \
     >"$GUI_LOG_DIR/isaac.log" 2>&1 &
 ISAAC_PID=$!
 
@@ -778,6 +780,8 @@ echo "GUI_STAGE=isaac_exit"
         template.replace("@@COMMAND@@", command)
         .replace("@@BIND@@", bind_block)
         .replace("@@SIF@@", sif_line)
+        .replace("@@PREPARE_SOURCE_COPY@@", PREPARE_SOURCE_COPY)
+        .replace("@@ISAACLAB_PYTHON@@", ISAACLAB_PYTHON)
         .replace("@@RESOLUTION@@", launch.resolution)
         .replace("@@PIXELS@@", launch.pixels)
         .replace("@@DISPLAY_MIN@@", str(launch.display_min))
