@@ -2,7 +2,7 @@
 
 Vector Sim deploys reproducible Isaac Lab workloads to SLURM clusters over SSH
 and Apptainer. It supports both **Bonecho** and **Killarney**. Cluster behavior
-and paths are discovered during onboarding. Vector Sim supports Isaac Lab v3.0.0 by default. For other versions please see [Isaac Sim Version Guide](ISAACLAB_VERSIONS.md)
+and paths are discovered during onboarding. Vector Sim supports Isaac Lab v3.0.0 by default. For other versions please see [Isaac Sim Version Guide](docs/ISAACLAB_VERSIONS.md)
 
 
 # Quick Setup: run Isaac Lab on Bon Echo with vector-sim
