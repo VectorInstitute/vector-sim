@@ -22,7 +22,7 @@ from vector_sim.images.ngc import (
     credentials_from_env,
 )
 
-SIF = "/scratch/alice/isaaclab-containers/isaac-lab-2.3.2.sif"
+SIF = "/scratch/alice/isaaclab-containers/isaac-lab-3.0.0.sif"
 KEY = "nvapi-super-secret-key"
 
 
@@ -76,11 +76,11 @@ def test_pull_sends_credentials_on_stdin_not_argv(tmp_path: Path) -> None:
     (call,) = _pull_calls(fake)
     joined = " ".join(call)
     assert KEY not in joined and "oauthtoken" not in joined
-    assert "docker://nvcr.io/nvidia/isaac-lab:2.3.2" in joined
+    assert "docker://nvcr.io/nvidia/isaac-lab:3.0.0" in joined
     assert "module load apptainer" in joined
     assert SIF in joined and f"{SIF}.partial" in joined
     assert fake.inputs[fake.calls.index(call)] == f"$oauthtoken\n{KEY}\n"
-    assert store.load_profile("bonecho").image.version == "2.3.2"
+    assert store.load_profile("bonecho").image.version == "3.0.0"
 
 
 def test_pull_skipped_when_sif_already_present(tmp_path: Path, capsys) -> None:
@@ -138,7 +138,7 @@ def test_plan_probes_but_never_pulls(tmp_path: Path, capsys) -> None:
     out = capsys.readouterr().out
     assert code == 0
     assert _pull_calls(fake) == []
-    assert "nvcr.io/nvidia/isaac-lab:2.3.2" in out
+    assert "nvcr.io/nvidia/isaac-lab:3.0.0" in out
     assert "Pull                REQUIRED" in out
     assert "NGC credentials     missing" in out
     assert "plan only" in out

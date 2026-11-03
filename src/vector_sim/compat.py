@@ -10,10 +10,11 @@ from dataclasses import dataclass
 # Generated wrapper contract. Increment when wrapper semantics change.
 WRAPPER_SCHEMA_VERSION = "2"
 
-# Pinned Isaac Lab checkout that passed Docker + Cartpole acceptance.
+# Pinned Isaac Lab checkout (tag v3.0.0) that passed the Bonecho Cartpole smoke test
+# with the matching NGC image; keep in step with DEFAULT_ISAACLAB_VERSION.
 ISAACLAB_REMOTE = "https://github.com/isaac-sim/IsaacLab.git"
-ISAACLAB_COMMIT = "b0542fe2d45bf91c4e1d9ef6952b9c709c80b4e8"
-ISAACLAB_REF_NAME = "tested Bonecho acceptance commit"
+ISAACLAB_COMMIT = "e3f7d9ff1f5d7f8280de3ece9000b7117f66bcf4"
+ISAACLAB_REF_NAME = "v3.0.0"
 
 # Local tools observed on the machine that produced the accepted deployment.
 TESTED_PYTHON = "3.12"

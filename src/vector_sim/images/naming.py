@@ -8,7 +8,7 @@ from vector_sim.errors import ConfigError
 
 NGC_REGISTRY = "nvcr.io"
 NGC_IMAGE = "nvcr.io/nvidia/isaac-lab"
-DEFAULT_ISAACLAB_VERSION = "2.3.2"
+DEFAULT_ISAACLAB_VERSION = "3.0.0"
 NGC_CATALOG_URL = "https://catalog.ngc.nvidia.com/orgs/nvidia/containers/isaac-lab"
 
 _VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")

@@ -139,7 +139,7 @@ def test_deploy_banner_is_visible_and_names_the_cluster(tmp_path) -> None:
     args = parse_args(["deploy", "--cluster", "killarney"])
     banner = format_command_banner(args, store)
     assert banner.splitlines()[0].startswith("=")
-    assert ">>> deploying isaac-lab-2.3.2 on Killarney <<<" in banner
+    assert ">>> deploying isaac-lab-3.0.0 on Killarney <<<" in banner
     assert resolve_banner_cluster(args, store) == "killarney"
 
 
