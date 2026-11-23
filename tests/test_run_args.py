@@ -59,3 +59,28 @@ def test_cli_override_precedence() -> None:
     default = resolve_job_spec(_profile(), task="Isaac-Cartpole-v0")
     assert default.partition == "a40_b1"
     assert default.resolved_gres == "gpu:a40:1"
+
+
+def test_legacy_rsl_rl_default_follows_isaaclab3_unified_train(tmp_path) -> None:
+    from vector_sim.jobs.args import (
+        LEGACY_RSL_RL_TRAIN,
+        UNIFIED_TRAIN,
+        JobSpec,
+        adapt_to_checkout,
+    )
+
+    (tmp_path / UNIFIED_TRAIN).parent.mkdir(parents=True)
+    (tmp_path / UNIFIED_TRAIN).write_text("")
+    spec = JobSpec(task="Isaac-Cartpole-v0")
+    args = adapt_to_checkout(
+        spec, ["--task", "Isaac-Cartpole", "--headless", "--enable_cameras", "--video"], tmp_path
+    )
+    assert spec.python_executable == UNIFIED_TRAIN
+    assert args == ["--rl_library", "rsl_rl", "--task", "Isaac-Cartpole", "--video"]
+
+    # A 2.x checkout keeps the per-library script untouched.
+    (tmp_path / LEGACY_RSL_RL_TRAIN).parent.mkdir(parents=True)
+    (tmp_path / LEGACY_RSL_RL_TRAIN).write_text("")
+    spec = JobSpec(task="Isaac-Cartpole-v0")
+    assert adapt_to_checkout(spec, ["--task", "x", "--headless"], tmp_path) == ["--task", "x", "--headless"]
+    assert spec.python_executable == LEGACY_RSL_RL_TRAIN

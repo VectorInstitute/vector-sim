@@ -9,14 +9,12 @@ from pathlib import Path
 from vector_sim import __version__
 from vector_sim.commands.auth import AuthCommand
 from vector_sim.commands.bootstrap import BootstrapCommand
-from vector_sim.commands.build import BuildCommand
 from vector_sim.commands.deploy import DeployCommand
 from vector_sim.commands.doctor import Doctor, format_doctor_report
 from vector_sim.commands.gui import GuiCommand
 from vector_sim.commands.init import InitCommand
 from vector_sim.commands.onboard import OnboardCommand
 from vector_sim.commands.ops import CancelCommand, LogsCommand, StatusCommand
-from vector_sim.commands.push import PushCommand
 from vector_sim.commands.run import RunCommand
 from vector_sim.commands.setup import SetupCommand
 from vector_sim.commands.smoke import SmokeTestCommand
@@ -24,7 +22,7 @@ from vector_sim.commands.videos import PullVideoCommand, ShellCommand, VideosCom
 from vector_sim.config.store import ConfigStore
 from vector_sim.errors import VectorSimError
 from vector_sim.exec import CommandRunner
-from vector_sim.images.naming import image_stem
+from vector_sim.images.naming import DEFAULT_ISAACLAB_VERSION, image_stem
 
 
 _GLOBAL_FLAGS_WITH_VALUE = {"--cluster", "--config-dir"}
@@ -114,29 +112,25 @@ def build_parser() -> argparse.ArgumentParser:
     onboard.add_argument("--no-auth", action="store_true", help="Skip interactive SSH/MFA.")
     auth = sub.add_parser("auth", help="Open interactive SSH so MFA can establish ControlMaster.")
     auth.add_argument("name", nargs="?", help="SSH alias or profile name (default: active cluster).")
-    deploy = sub.add_parser("deploy", help="Build, convert, and push using existing cache logic.")
-    deploy.add_argument("--image-profile", default="base")
-    deploy.add_argument("--plan", action="store_true", help="Show the plan only.")
-    deploy.add_argument("--force", action="store_true")
-    deploy.add_argument("--force-convert", action="store_true")
-    deploy.add_argument("--force-upload", action="store_true")
+    deploy = sub.add_parser(
+        "deploy",
+        help="Pull the official NVIDIA NGC Isaac Lab image onto the cluster with Apptainer.",
+    )
+    deploy.add_argument(
+        "--image-version",
+        default=None,
+        help=f"Isaac Lab release tag on NGC (default: from cluster profile, {DEFAULT_ISAACLAB_VERSION}).",
+    )
+    deploy.add_argument("--plan", action="store_true", help="Show the plan only; nothing is pulled.")
+    deploy.add_argument("--force", action="store_true", help="Re-pull even if the SIF is already on the cluster.")
     smoke = sub.add_parser("smoke-test", help="Submit the Cartpole acceptance workload and wait.")
     smoke.add_argument("--video", action="store_true", help="Enable headless camera video.")
     smoke.add_argument("--no-wait", action="store_true", help="Submit only.")
     smoke.add_argument("--timeout", type=float, default=3600)
     smoke.add_argument("--max-iterations", type=int, default=50)
-    build = sub.add_parser("build", help="Build the configured Docker image profile.")
-    build.add_argument("--image-profile", default="base", help="Isaac Lab container profile (default: base).")
-    build.add_argument("--force", action="store_true", help="Rebuild even if the input fingerprint is unchanged.")
-    push = sub.add_parser("push", help="Convert and upload the container if fingerprints changed.")
-    push.add_argument("--image-profile", default="base", help="Isaac Lab container profile (default: base).")
-    push.add_argument("--force", action="store_true", help="Force rebuild, reconvert, and reupload.")
-    push.add_argument("--force-convert", action="store_true", help="Re-run Apptainer conversion even if cached.")
-    push.add_argument("--force-upload", action="store_true", help="Upload even if remote checksum matches.")
-
     run = sub.add_parser("run", help="Rsync code and submit a SLURM job.")
     run.add_argument("--task", required=True, help="Isaac Lab task id, e.g. Isaac-Cartpole-v0")
-    run.add_argument("--image-profile", default=None, help="Container profile (default: from cluster profile).")
+    run.add_argument("--image-version", default=None, help="Isaac Lab NGC image tag (default: from cluster profile).")
     run.add_argument("--partition", help="SLURM partition override")
     run.add_argument("--gpu", help="GPU type, e.g. a40")
     run.add_argument("--gpus", type=int, help="GPU count")
@@ -161,7 +155,7 @@ def build_parser() -> argparse.ArgumentParser:
         "gui",
         help="Submit an Isaac Sim GUI session and print the noVNC SSH tunnel.",
     )
-    gui.add_argument("--image-profile", default=None, help="Container profile (default: from cluster profile).")
+    gui.add_argument("--image-version", default=None, help="Isaac Lab NGC image tag (default: from cluster profile).")
     gui.add_argument("--partition", help="SLURM partition override")
     gui.add_argument("--gpu", help="GPU type, e.g. a40")
     gui.add_argument("--gpus", type=int, help="GPU count")
@@ -219,8 +213,6 @@ _COMMAND_GERUNDS = {
     "auth": "authenticating",
     "deploy": "deploying",
     "smoke-test": "smoke-testing",
-    "build": "building",
-    "push": "pushing",
     "run": "running",
     "gui": "starting a GUI session",
     "status": "checking status",
@@ -265,8 +257,8 @@ def format_command_banner(args: argparse.Namespace, store: ConfigStore) -> str:
 
 def _banner_subject(args: argparse.Namespace) -> str | None:
     command = args.command
-    if command in {"deploy", "push", "build"}:
-        return image_stem(getattr(args, "image_profile", None) or "base")
+    if command == "deploy":
+        return image_stem(getattr(args, "image_version", None) or DEFAULT_ISAACLAB_VERSION)
     if command == "run":
         return getattr(args, "task", None)
     if command == "logs":
@@ -309,7 +301,7 @@ def _dispatch(args: argparse.Namespace, runner: CommandRunner, store: ConfigStor
         runner.emit(f"  home_dir: {profile.home_dir or '(unresolved)'}")
         runner.emit(f"  scratch_dir: {profile.scratch_dir or '(unresolved)'}")
         runner.emit(f"  isaaclab_path: {profile.isaaclab_path or '(not found)'}")
-        runner.emit("remaining: run vector-sim setup, then doctor / build / push.")
+        runner.emit("remaining: run vector-sim setup, then doctor / deploy.")
         return 0
     if command == "setup":
         SetupCommand(runner, store).run(
@@ -323,25 +315,11 @@ def _dispatch(args: argparse.Namespace, runner: CommandRunner, store: ConfigStor
         results = Doctor(runner, store, cluster=cluster).run()
         runner.emit(format_doctor_report(results))
         return 1 if any(not item.ok for item in results) else 0
-    if command == "build":
-        return BuildCommand(runner, store).run(
-            cluster=args.cluster,
-            image_profile=args.image_profile,
-            force=args.force,
-        )
-    if command == "push":
-        return PushCommand(runner, store).run(
-            cluster=args.cluster,
-            image_profile=args.image_profile,
-            force=args.force,
-            force_convert=args.force_convert,
-            force_upload=args.force_upload,
-        )
     if command == "run":
         return RunCommand(runner, store).run(
             cluster=args.cluster,
             task=args.task,
-            image_profile=args.image_profile,
+            image_version=args.image_version,
             partition=args.partition,
             gpu=args.gpu,
             gpus=args.gpus,
@@ -359,7 +337,7 @@ def _dispatch(args: argparse.Namespace, runner: CommandRunner, store: ConfigStor
     if command == "gui":
         return GuiCommand(runner, store).run(
             cluster=args.cluster,
-            image_profile=args.image_profile,
+            image_version=args.image_version,
             partition=args.partition,
             gpu=args.gpu,
             gpus=args.gpus,
@@ -412,11 +390,9 @@ def _dispatch(args: argparse.Namespace, runner: CommandRunner, store: ConfigStor
     if command == "deploy":
         return DeployCommand(runner, store).run(
             cluster=args.cluster,
-            image_profile=args.image_profile,
+            image_version=args.image_version,
             plan=args.plan,
             force=args.force,
-            force_convert=args.force_convert,
-            force_upload=args.force_upload,
         )
     if command == "smoke-test":
         return SmokeTestCommand(runner, store).run(

@@ -10,15 +10,7 @@ from vector_sim.cluster.adapters import (
 from vector_sim.commands.init import build_initial_profile
 from vector_sim.config.models import BUILTIN_PROFILES, ClusterProfile, bonecho_defaults
 from vector_sim.exec import CommandRunner
-from vector_sim.images.conversion import ConversionBackend, LocalApptainerConversion, RemoteConversion
 from vector_sim.jobs.generate import generate_runtime
-
-
-def test_conversion_backends_are_pluggable(tmp_path: Path) -> None:
-    local: ConversionBackend = LocalApptainerConversion(CommandRunner(), work_root=tmp_path)
-    remote: ConversionBackend = RemoteConversion()
-    assert local.name == "local-apptainer"
-    assert remote.name == "remote"
 
 
 def test_bonecho_defaults_uses_vector_slurm() -> None:

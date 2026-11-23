@@ -26,13 +26,14 @@ These hashes must not be used as hard deploy gates.
 
 ## Container (at acceptance)
 
-- Docker image digest:
-  `sha256:0448e7e5b8b13bb9e3f304e115f77353b0dd19976b51d72eb991cd1fb99ecd4d`
-- Deployed artifact SHA-256:
-  `98ba9b235957a1d843759c4bb7aa55cf56f747e84240ccfd16dcc3e8ea113e7d`
+- Recorded when the image was still built locally and uploaded (before
+  `deploy` switched to pulling the official NGC image):
+  Docker image digest
+  `sha256:0448e7e5b8b13bb9e3f304e115f77353b0dd19976b51d72eb991cd1fb99ecd4d`,
+  artifact SHA-256
+  `98ba9b235957a1d843759c4bb7aa55cf56f747e84240ccfd16dcc3e8ea113e7d`.
 
-Future teammates should cache against **their** fingerprints and checksums, not
-these values.
+These are historical; current deployments use `nvcr.io/nvidia/isaac-lab:<version>`.
 
 ## Runtime wrapper behavior (at acceptance)
 

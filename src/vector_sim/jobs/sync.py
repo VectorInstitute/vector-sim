@@ -64,7 +64,8 @@ def rsync_source_args(
     args = [
         "rsync",
         "-a",
-        "--info=progress2",
+        # --info=progress2 needs rsync >= 3.1; macOS ships 2.6.9-compatible openrsync.
+        "--progress",
         "-e",
         "ssh -o BatchMode=yes -o ConnectTimeout=15",
     ]

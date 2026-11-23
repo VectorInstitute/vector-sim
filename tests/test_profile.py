@@ -1,4 +1,4 @@
-from vector_sim.config.models import ClusterProfile, Fingerprints, bonecho_defaults
+from vector_sim.config.models import ClusterProfile, bonecho_defaults
 from vector_sim.config.store import ConfigStore
 from vector_sim.exec import CommandRunner
 from vector_sim.ssh.session import SshSession, wrap_login_shell
@@ -31,13 +31,13 @@ def test_profile_yaml_roundtrip(tmp_path) -> None:
     profile.remote_user = "alice"
     profile.home_dir = "/h/alice"
     profile.scratch_dir = "/scratch/alice"
-    profile.fingerprints = Fingerprints(build_input_fingerprint="abc")
+    profile.image.version = "2.3.1"
     store.save_profile(profile)
     loaded = store.load_profile("bonecho")
     assert loaded.remote_user == "alice"
     assert loaded.apptainer.writable_mode == "writable-tmpfs"
     assert loaded.apptainer.extra_exec_args == ["--nv", "--containall", "--writable-tmpfs"]
-    assert loaded.fingerprints.build_input_fingerprint == "abc"
+    assert loaded.image.version == "2.3.1"
     assert loaded.scheduler.remote_shell == "login"
     assert loaded.cluster_type == "vector-slurm"
 

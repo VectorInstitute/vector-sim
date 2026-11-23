@@ -55,7 +55,7 @@ def test_missing_remote_container_clear_error(tmp_path: Path) -> None:
     fake.add("CONTAINER_OK", stdout="")  # won't match; default returns empty ok
     # Make the test -f probe fail
     fake.add(
-        lambda args: "test -f" in " ".join(args),
+        lambda args: "test -s" in " ".join(args),
         stdout="",
         returncode=0,
     )
@@ -73,7 +73,7 @@ def test_ssh_denial_is_not_reported_as_missing_container(tmp_path: Path) -> None
     store = _store(tmp_path, repo)
     fake = FakeExecute()
     fake.add(
-        "test -f",
+        "test -s",
         stdout="",
         stderr="mollysun@bonecho.vectorinstitute.ai: Permission denied (keyboard-interactive).\n",
         returncode=255,

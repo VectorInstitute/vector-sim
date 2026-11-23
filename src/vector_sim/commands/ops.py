@@ -8,7 +8,7 @@ from pathlib import Path
 from vector_sim.config.store import ConfigStore
 from vector_sim.errors import ConfigError, VectorSimError
 from vector_sim.exec import CommandRunner
-from vector_sim.images.build import require_cluster_profile
+from vector_sim.commands.common import require_cluster_profile
 from vector_sim.jobs.gui import format_saved_gui_connection
 from vector_sim.jobs.status import format_status, probe_job
 from vector_sim.ssh.session import SshSession

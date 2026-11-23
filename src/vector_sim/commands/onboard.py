@@ -52,7 +52,7 @@ class OnboardCommand:
         alias = ssh_alias or name
 
         self.runner.emit(f"== onboard {name} ==")
-        prereqs = inspect_prereqs(start=self.start_dir)
+        prereqs = inspect_prereqs()
         self.runner.emit(format_prereq_report(prereqs))
         prereq_status = "READY" if prereqs.ready else "USER ACTION REQUIRED"
         report.add("prerequisites", prereq_status, prereqs.platform.pretty)
